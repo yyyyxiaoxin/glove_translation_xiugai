@@ -1,0 +1,82 @@
+{
+  "port": "COM11",
+  "capture_seconds": 35,
+  "bytes": 111222,
+  "mpu_detected": [
+    {
+      "channel": 2,
+      "mux": "TCA1",
+      "mux_channel": 2,
+      "who_am_i": "0x68"
+    },
+    {
+      "channel": 3,
+      "mux": "TCA1",
+      "mux_channel": 3,
+      "who_am_i": "0x68"
+    },
+    {
+      "channel": 5,
+      "mux": "TCA1",
+      "mux_channel": 5,
+      "who_am_i": "0x68"
+    },
+    {
+      "channel": 6,
+      "mux": "TCA1",
+      "mux_channel": 6,
+      "who_am_i": "0x68"
+    },
+    {
+      "channel": 7,
+      "mux": "TCA1",
+      "mux_channel": 7,
+      "who_am_i": "0x68"
+    },
+    {
+      "channel": 8,
+      "mux": "TCA2",
+      "mux_channel": 0,
+      "who_am_i": "0x68"
+    },
+    {
+      "channel": 9,
+      "mux": "TCA2",
+      "mux_channel": 1,
+      "who_am_i": "0x68"
+    }
+  ],
+  "mpu_count": 7,
+  "data_frame_count": 365,
+  "data_field_counts": [
+    71
+  ],
+  "battery_samples": [
+    "[BAT]30607,left,4116,93",
+    "[BAT]31607,left,4120,93",
+    "[BAT]32607,left,4116,93",
+    "[BAT]33607,left,4116,93",
+    "[BAT]34607,left,4116,93"
+  ],
+  "read_error_lines": [
+    "W (1208) imu_acquisition: IMU CH0: TCA1下游CH0未检测到MPU: ESP_ERR_INVALID_STATE",
+    "W (1218) imu_acquisition: IMU CH1: TCA1下游CH1未检测到MPU: ESP_ERR_INVALID_STATE",
+    "I (1328) imu_acquisition: IMU CH2: TCA1下游CH2，WHO_AM_I=0x68",
+    "I (1428) imu_acquisition: IMU CH3: TCA1下游CH3，WHO_AM_I=0x68",
+    "W (1428) imu_acquisition: IMU CH4: TCA1下游CH4未检测到MPU: ESP_ERR_INVALID_STATE",
+    "I (1538) imu_acquisition: IMU CH5: TCA1下游CH5，WHO_AM_I=0x68",
+    "I (1638) imu_acquisition: IMU CH6: TCA1下游CH6，WHO_AM_I=0x68",
+    "I (1738) imu_acquisition: IMU CH7: TCA1下游CH7，WHO_AM_I=0x68",
+    "I (1838) imu_acquisition: IMU CH8: TCA2下游CH0，WHO_AM_I=0x68",
+    "I (1938) imu_acquisition: IMU CH9: TCA2下游CH1，WHO_AM_I=0x68",
+    "I (2098) imu_acquisition: IMU CH10: TCA2下游CH2，ICM-20948六轴模式"
+  ],
+  "firmware": [
+    "HAND=LEFT",
+    "FIRMWARE_ID=GLOVE_LEFT"
+  ],
+  "audio_lines": [
+    "I (458) max98357a: MAX98357A就绪: BCLK=GPIO12 LRCLK=GPIO13 DIN=GPIO14 SD=GPIO15",
+    "I (998) max98357a: 1000 Hz低音量测试音播放完成"
+  ]
+}

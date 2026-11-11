@@ -1,0 +1,30 @@
+{
+  "port": "COM12",
+  "bytes": 8624,
+  "events": [
+    "Opened COM12",
+    "Reset attempted"
+  ],
+  "audio_messages": [
+    "rst:0x1 (POWERON),boot:0xa (SPI_FAST_FLASH_BOOT)",
+    "I (24) boot: ESP-IDF HEAD-HASH-NOTFOUND 2nd stage bootloader",
+    "I (25) boot: compile time Oct 14 2026 22:19:55",
+    "I (25) boot: Multicore bootloader",
+    "I (26) boot: chip revision: v0.2",
+    "I (29) boot: efuse block revision: v1.4",
+    "I (44) boot: Enabling RNG early entropy source...",
+    "I (48) boot: Partition Table:",
+    "I (51) boot: ## Label            Usage          Type ST Offset   Length",
+    "I (57) boot:  0 nvs              WiFi data        01 02 00009000 00006000",
+    "I (64) boot:  1 phy_init         RF data          01 01 0000f000 00001000",
+    "I (70) boot:  2 factory          factory app      00 00 00010000 00100000",
+    "I (77) boot: End of partition table",
+    "I (249) boot: Loaded app from partition at offset 0x10000",
+    "I (249) boot: Disabling RNG early entropy source...",
+    "HAND=LEFT",
+    "FIRMWARE_ID=GLOVE_LEFT",
+    "I (458) max98357a: MAX98357A就绪: BCLK=GPIO12 LRCLK=GPIO13 DIN=GPIO14 SD=GPIO15",
+    "I (998) max98357a: 1000 Hz低音量测试音播放完成"
+  ],
+  "log": "C:\\Users\\Administrator\\Desktop\\Glove Translation\\Glove Translation\\diagnostics\\speaker_connected_COM12_20261101_200926.log"
+}

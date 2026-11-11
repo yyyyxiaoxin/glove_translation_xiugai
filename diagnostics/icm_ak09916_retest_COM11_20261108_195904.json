@@ -1,0 +1,89 @@
+{
+  "port": "COM11",
+  "capture_seconds": 27,
+  "data_lines": 273,
+  "complete_numeric_frames": 266,
+  "mpu_channels": [
+    {
+      "channel": 0,
+      "detected": true,
+      "nonzero_frames": 266,
+      "distinct_vectors": 266
+    },
+    {
+      "channel": 1,
+      "detected": true,
+      "nonzero_frames": 266,
+      "distinct_vectors": 266
+    },
+    {
+      "channel": 2,
+      "detected": true,
+      "nonzero_frames": 266,
+      "distinct_vectors": 266
+    },
+    {
+      "channel": 3,
+      "detected": true,
+      "nonzero_frames": 266,
+      "distinct_vectors": 266
+    },
+    {
+      "channel": 4,
+      "detected": true,
+      "nonzero_frames": 266,
+      "distinct_vectors": 266
+    },
+    {
+      "channel": 5,
+      "detected": true,
+      "nonzero_frames": 266,
+      "distinct_vectors": 266
+    },
+    {
+      "channel": 6,
+      "detected": true,
+      "nonzero_frames": 266,
+      "distinct_vectors": 266
+    },
+    {
+      "channel": 7,
+      "detected": true,
+      "nonzero_frames": 266,
+      "distinct_vectors": 266
+    },
+    {
+      "channel": 8,
+      "detected": true,
+      "nonzero_frames": 266,
+      "distinct_vectors": 266
+    },
+    {
+      "channel": 9,
+      "detected": true,
+      "nonzero_frames": 266,
+      "distinct_vectors": 266
+    }
+  ],
+  "runtime_error_lines": [],
+  "icm_log_lines": [
+    "W (2328) icm20948: AK09916\u672a\u68c0\u6d4b\u5230\uff0cICM-20948\u6309\u516d\u8f74\u6a21\u5f0f\u5de5\u4f5c",
+    "I (2328) imu_acquisition: IMU CH10: TCA2\u4e0b\u6e38CH2\uff0cICM-20948\u516d\u8f74\u6a21\u5f0f"
+  ],
+  "log": "C:\\Users\\Administrator\\Desktop\\Glove Translation\\Glove Translation\\diagnostics\\icm_ak09916_retest_COM11_20261108_195904.log",
+  "icm_data": {
+    "nonzero_frames": 266,
+    "distinct_vectors": 266
+  },
+  "mag_data": {
+    "nonzero_frames": 0,
+    "distinct_vectors": 1,
+    "first_vectors": [
+      [
+        0,
+        0,
+        0
+      ]
+    ]
+  }
+}

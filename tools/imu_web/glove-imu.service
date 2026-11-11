@@ -1,0 +1,22 @@
+[Unit]
+Description=Glove IMU SQLite recorder
+After=network.target
+
+[Service]
+User=glove-imu
+Group=glove-imu
+EnvironmentFile=/etc/glove-imu.env
+WorkingDirectory=/opt/glove-imu
+ExecStart=/usr/bin/python3 /opt/glove-imu/server.py
+Restart=on-failure
+RestartSec=3
+StateDirectory=glove-imu
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/glove-imu
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,76 @@
+{
+  "glove": 1,
+  "attempt": "???????",
+  "port": "COM14",
+  "source_log": "diagnostics\\round_new_glove01_angle_COM14_20261028_212421.log",
+  "boot_messages": [],
+  "channels": [
+    {
+      "channel": 0,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    },
+    {
+      "channel": 1,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    },
+    {
+      "channel": 2,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    },
+    {
+      "channel": 3,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    },
+    {
+      "channel": 4,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    },
+    {
+      "channel": 5,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    },
+    {
+      "channel": 6,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    },
+    {
+      "channel": 7,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    },
+    {
+      "channel": 8,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    },
+    {
+      "channel": 9,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    },
+    {
+      "channel": 10,
+      "frames": 0,
+      "nonzero_frames": 0,
+      "distinct_samples": 0
+    }
+  ],
+  "limitation": "???????????????????????????????????????"
+}

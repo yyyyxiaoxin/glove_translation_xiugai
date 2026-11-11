@@ -1,0 +1,110 @@
+{
+  "port": "COM11",
+  "capture_seconds": 27,
+  "glove": "changed_by_user_unspecified_identity",
+  "data_lines": 273,
+  "complete_numeric_frames": 268,
+  "mpu_channels": [
+    {
+      "channel": 0,
+      "detected": true,
+      "nonzero_frames": 268,
+      "distinct_vectors": 268
+    },
+    {
+      "channel": 1,
+      "detected": true,
+      "nonzero_frames": 268,
+      "distinct_vectors": 268
+    },
+    {
+      "channel": 2,
+      "detected": true,
+      "nonzero_frames": 268,
+      "distinct_vectors": 268
+    },
+    {
+      "channel": 3,
+      "detected": true,
+      "nonzero_frames": 268,
+      "distinct_vectors": 268
+    },
+    {
+      "channel": 4,
+      "detected": true,
+      "nonzero_frames": 268,
+      "distinct_vectors": 268
+    },
+    {
+      "channel": 5,
+      "detected": true,
+      "nonzero_frames": 268,
+      "distinct_vectors": 268
+    },
+    {
+      "channel": 6,
+      "detected": true,
+      "nonzero_frames": 268,
+      "distinct_vectors": 268
+    },
+    {
+      "channel": 7,
+      "detected": true,
+      "nonzero_frames": 268,
+      "distinct_vectors": 268
+    },
+    {
+      "channel": 8,
+      "detected": true,
+      "nonzero_frames": 268,
+      "distinct_vectors": 268
+    },
+    {
+      "channel": 9,
+      "detected": true,
+      "nonzero_frames": 268,
+      "distinct_vectors": 268
+    }
+  ],
+  "runtime_error_lines": [],
+  "icm_log_lines": [
+    "I (2348) icm20948: ICM-20948\u548cAK09916\u521d\u59cb\u5316\u6210\u529f",
+    "I (2348) imu_acquisition: IMU CH10: TCA2\u4e0b\u6e38CH2\uff0cICM-20948\u4e5d\u8f74\u6a21\u5f0f"
+  ],
+  "log": "C:\\Users\\Administrator\\Desktop\\Glove Translation\\Glove Translation\\diagnostics\\changed_glove_icm_mpu_COM11_20261108_200228.log",
+  "icm_data": {
+    "nonzero_frames": 268,
+    "distinct_vectors": 268
+  },
+  "mag_data": {
+    "nonzero_frames": 268,
+    "distinct_vectors": 204,
+    "first_vectors": [
+      [
+        -72,
+        -178,
+        170
+      ],
+      [
+        -75,
+        -178,
+        162
+      ],
+      [
+        -73,
+        -182,
+        161
+      ],
+      [
+        -80,
+        -178,
+        158
+      ],
+      [
+        -81,
+        -182,
+        169
+      ]
+    ]
+  }
+}

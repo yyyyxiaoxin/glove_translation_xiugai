@@ -1,0 +1,74 @@
+{
+  "port": "COM11",
+  "seconds": 25,
+  "data_frames": 252,
+  "field_counts": [
+    44,
+    62,
+    71
+  ],
+  "channels": [
+    {
+      "channel": 0,
+      "detected": true,
+      "nonzero_frames": 246,
+      "distinct_vectors": 246
+    },
+    {
+      "channel": 1,
+      "detected": true,
+      "nonzero_frames": 246,
+      "distinct_vectors": 246
+    },
+    {
+      "channel": 2,
+      "detected": true,
+      "nonzero_frames": 246,
+      "distinct_vectors": 246
+    },
+    {
+      "channel": 3,
+      "detected": true,
+      "nonzero_frames": 246,
+      "distinct_vectors": 246
+    },
+    {
+      "channel": 4,
+      "detected": false,
+      "nonzero_frames": 0,
+      "distinct_vectors": 1
+    },
+    {
+      "channel": 5,
+      "detected": true,
+      "nonzero_frames": 246,
+      "distinct_vectors": 246
+    },
+    {
+      "channel": 6,
+      "detected": true,
+      "nonzero_frames": 246,
+      "distinct_vectors": 246
+    },
+    {
+      "channel": 7,
+      "detected": true,
+      "nonzero_frames": 246,
+      "distinct_vectors": 246
+    },
+    {
+      "channel": 8,
+      "detected": true,
+      "nonzero_frames": 246,
+      "distinct_vectors": 246
+    },
+    {
+      "channel": 9,
+      "detected": true,
+      "nonzero_frames": 246,
+      "distinct_vectors": 246
+    }
+  ],
+  "log": "C:\\Users\\Administrator\\Desktop\\Glove Translation\\Glove Translation\\diagnostics\\mpu_retest_COM11_20261108_194318.log",
+  "runtime_error_lines": []
+}

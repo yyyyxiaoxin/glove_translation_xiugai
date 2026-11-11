@@ -1,0 +1,16 @@
+menu "Glove identity"
+
+    choice GLOVE_HAND_TYPE
+        prompt "Hand type"
+        default GLOVE_HAND_LEFT
+        help
+            Select the identity compiled into this firmware image.
+
+        config GLOVE_HAND_LEFT
+            bool "Left hand"
+
+        config GLOVE_HAND_RIGHT
+            bool "Right hand"
+    endchoice
+
+endmenu

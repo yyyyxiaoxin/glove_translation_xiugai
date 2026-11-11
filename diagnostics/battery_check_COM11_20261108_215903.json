@@ -1,0 +1,12 @@
+{
+  "samples": 24,
+  "latest": [
+    23607,
+    3720,
+    60
+  ],
+  "last_samples": 10,
+  "minimum_mv": 3704,
+  "maximum_mv": 3722,
+  "mean_mv": 3709.8
+}

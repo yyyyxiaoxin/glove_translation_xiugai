@@ -1,0 +1,87 @@
+{
+  "glove": 1,
+  "attempt": "angle_adjusted_boot_scan",
+  "port": "COM14",
+  "source_log": "C:\\Users\\Administrator\\Desktop\\Glove Translation\\Glove Translation\\diagnostics\\round_new_glove01_wait_reset_20261028_215331.log",
+  "tca_detected_count": 2,
+  "mpu_channels": [
+    {
+      "global_channel": 0,
+      "mux": "TCA1",
+      "mux_channel": 0,
+      "detected": false,
+      "message": "W (1198) imu_acquisition: IMU CH0: TCA1下游CH0未检测到MPU: ESP_ERR_INVALID_STATE"
+    },
+    {
+      "global_channel": 1,
+      "mux": "TCA1",
+      "mux_channel": 1,
+      "detected": false,
+      "message": "W (1208) imu_acquisition: IMU CH1: TCA1下游CH1未检测到MPU: ESP_ERR_INVALID_STATE"
+    },
+    {
+      "global_channel": 2,
+      "mux": "TCA1",
+      "mux_channel": 2,
+      "detected": false,
+      "message": "W (1228) imu_acquisition: IMU CH2: TCA1下游CH2未检测到MPU: ESP_ERR_INVALID_STATE"
+    },
+    {
+      "global_channel": 3,
+      "mux": "TCA1",
+      "mux_channel": 3,
+      "detected": false,
+      "message": "W (1238) imu_acquisition: IMU CH3: TCA1下游CH3未检测到MPU: ESP_ERR_INVALID_STATE"
+    },
+    {
+      "global_channel": 4,
+      "mux": "TCA1",
+      "mux_channel": 4,
+      "detected": false,
+      "message": "W (1248) imu_acquisition: IMU CH4: TCA1下游CH4未检测到MPU: ESP_ERR_INVALID_STATE"
+    },
+    {
+      "global_channel": 5,
+      "mux": "TCA1",
+      "mux_channel": 5,
+      "detected": false,
+      "message": "W (1268) imu_acquisition: IMU CH5: TCA1下游CH5未检测到MPU: ESP_ERR_INVALID_STATE"
+    },
+    {
+      "global_channel": 6,
+      "mux": "TCA1",
+      "mux_channel": 6,
+      "detected": false,
+      "message": "W (1278) imu_acquisition: IMU CH6: TCA1下游CH6未检测到MPU: ESP_ERR_INVALID_STATE"
+    },
+    {
+      "global_channel": 7,
+      "mux": "TCA1",
+      "mux_channel": 7,
+      "detected": false,
+      "message": "W (1298) imu_acquisition: IMU CH7: TCA1下游CH7未检测到MPU: ESP_ERR_INVALID_STATE"
+    },
+    {
+      "global_channel": 8,
+      "mux": "TCA2",
+      "mux_channel": 0,
+      "detected": false,
+      "message": "W (1308) imu_acquisition: IMU CH8: TCA2下游CH0未检测到MPU: ESP_ERR_INVALID_STATE"
+    },
+    {
+      "global_channel": 9,
+      "mux": "TCA2",
+      "mux_channel": 1,
+      "detected": false,
+      "message": "W (1328) imu_acquisition: IMU CH9: TCA2下游CH1未检测到MPU: ESP_ERR_INVALID_STATE"
+    }
+  ],
+  "imu_summary": "0/11",
+  "baseline": {
+    "live_mpu_channels": [
+      8
+    ],
+    "frames": 133
+  },
+  "u9_physical_mapping_verified": false
+}
