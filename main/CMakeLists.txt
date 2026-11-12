@@ -11,6 +11,7 @@ idf_component_register(
         "cloud_presence.c"
         "glove_recording.c"
         "glove_link.c"
+        "glove_sync.c"
         "imu_calibration.c"
         "max98357a_audio.c"
         "battery_monitor.c"

@@ -310,6 +310,9 @@ esp_err_t imu_acquisition_read_frame(imu_frame_t *frame)
     /* Frame reference is the midpoint of the sequential read window.
      * This is not a hardware-synchronized sensor conversion timestamp. */
     frame->timestamp_ms = (scan_started_us + scan_finished_us) / 2000;
+    frame->source_us = (scan_started_us + scan_finished_us) / 2;
+    frame->aligned_us = frame->source_us + frame->clock_offset_us;
+    frame->scan_us = scan_us;
     scan_sum_us += scan_us;
     if (scan_us > scan_max_us) scan_max_us = scan_us;
     if (++scan_count == 250) {

@@ -12,6 +12,7 @@
 #include <time.h>
 
 #include "cloud_config.h"
+#include "board_config.h"
 #include "imu_calibration.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -31,12 +32,12 @@
  * 左手录制上传管线：
  *
  *   本地帧 ─┐
- *           ├─ 待配对缓冲(80+80) ─ 配对任务 ─ 上传队列(160对) ─ HTTPS 任务
+ *           ├─ 待配对缓冲 ─ 配对任务 ─ 上传队列 ─ HTTPS 任务
  *   右手帧 ─┘
  *
- * - 右手帧的时间戳是本机启动毫秒，用滑动窗口最小延迟估算到左手时钟的偏移。
- * - 配对任务把时间最接近的左右手帧配成一对；同一对的 sequence 和
- *   timestamp_ms 完全相同，服务端 CSV 可直接按 sequence 合并双手。
+ * - 双向对时由 glove_sync 执行，右手携带映射到左手时间轴的采样中点。
+ * - 只有同一计划采样时隙、同步有效且中点差不超过门限的帧才配对。
+ * - CSV 时间为计划时隙，原始时间和实际中点差保留在诊断字段中。
  * - 配对最多等待 PAIR_HOLD_MS 让后到的对侧帧入队；缺帧超过
  *   PAIR_GIVE_UP_MS 后按单手上传。
  * - 优先使用 {"session","hands":[...]} 双手单请求格式；旧服务端返回 400
@@ -44,8 +45,8 @@
  *
  * 右手固件不启动本模块，只经 ESP-NOW 发送。
  */
-#define PENDING_CAPACITY   80
-#define UPLOAD_QUEUE_SIZE  96
+#define PENDING_CAPACITY   40
+#define UPLOAD_QUEUE_SIZE  64
 #define BATCH_PAIRS        40
 #define BODY_SIZE          70000
 #define PARTIAL_BATCH_MS   500
@@ -53,10 +54,9 @@
 #define WARMUP_INTERVAL_MS 5000
 
 #define PAIR_HOLD_MS       40
-#define PAIR_TOLERANCE_MS  35
+#define PAIR_TOLERANCE_MS  5
 #define PAIR_GIVE_UP_MS    200
 
-#define OFFSET_WINDOW      100
 #define NTP_VALID_UNIX     1704067200
 
 typedef struct {
@@ -108,15 +108,7 @@ static uint32_t s_solo_right;
 /* 仅配对任务访问。 */
 static uint64_t s_pair_session;
 static uint32_t s_pair_sequence;
-
-/* 仅在 ESP-NOW 接收回调（Wi-Fi 任务）中访问。 */
-static int64_t s_offset_window[OFFSET_WINDOW];
-static unsigned s_offset_count;
-static unsigned s_offset_index;
-static int64_t s_offset_min;
-static bool s_offset_ready;
-static int64_t s_last_aligned_ms;
-static uint32_t s_offset_updates;
+static int64_t s_session_first_slot;
 
 /* 仅在 HTTPS 任务中修改；初始假定新服务端支持双手单请求。 */
 static bool s_combined_supported = true;
@@ -145,48 +137,6 @@ static int64_t current_unix_ms(void)
     return now.tv_sec >= NTP_VALID_UNIX
         ? (int64_t)now.tv_sec * 1000 + now.tv_usec / 1000
         : 0;
-}
-
-/*
- * 用最近 OFFSET_WINDOW 帧的最小 (接收时刻 - 右手时间戳) 估算时钟偏移。
- * 传输/调度延迟只会让差值变大，取窗口最小值可逼近真实偏移。
- * 右手复位导致时间基准突变时清空窗口重新估计。
- */
-static int64_t align_remote_timestamp(int64_t right_ms)
-{
-    int64_t now_ms = esp_timer_get_time() / 1000;
-    int64_t sample = now_ms - right_ms;
-
-    if (s_offset_ready) {
-        int64_t predicted = right_ms + s_offset_min;
-        int64_t delta = predicted - s_last_aligned_ms;
-        if (delta < 0) delta = -delta;
-        if (delta > 5000) {
-            s_offset_count = 0;
-            s_offset_index = 0;
-            s_offset_ready = false;
-        }
-    }
-
-    s_offset_window[s_offset_index] = sample;
-    s_offset_index = (s_offset_index + 1) % OFFSET_WINDOW;
-    if (s_offset_count < OFFSET_WINDOW) ++s_offset_count;
-
-    int64_t min = s_offset_window[0];
-    for (unsigned i = 1; i < s_offset_count; ++i) {
-        if (s_offset_window[i] < min) min = s_offset_window[i];
-    }
-    s_offset_min = min;
-    s_offset_ready = true;
-
-    int64_t aligned = right_ms + min;
-    s_last_aligned_ms = aligned;
-
-    if ((++s_offset_updates % 500) == 0) {
-        ESP_LOGI(TAG, "右手时钟对齐：offset=%" PRId64 " ms，窗口=%u 帧",
-                 min, s_offset_count);
-    }
-    return aligned;
 }
 
 static bool pending_push(pending_buffer_t *buffer, const pending_frame_t *item)
@@ -227,13 +177,19 @@ static int pending_oldest(const pending_buffer_t *buffer, pending_frame_t *out)
 
 /* 调用者必须持有 s_pending_lock。 */
 static int pending_nearest(const pending_buffer_t *buffer, uint64_t session,
-                           int64_t aligned_ms, int64_t *diff_out)
+                           const imu_frame_t *reference, int64_t *diff_out)
 {
     int best = -1;
     int64_t best_diff = INT64_MAX;
     for (unsigned i = 0; i < buffer->count; ++i) {
         if (buffer->items[i].session != session) continue;
-        int64_t diff = buffer->items[i].aligned_ms - aligned_ms;
+        const imu_frame_t *candidate = &buffer->items[i].frame;
+        if (!candidate->sync_valid || !reference->sync_valid ||
+            candidate->scheduled_us != reference->scheduled_us) continue;
+        int64_t diff_us = candidate->aligned_us - reference->aligned_us;
+        if (diff_us < 0) diff_us = -diff_us;
+        if (diff_us > PAIR_TOLERANCE_MS * 1000) continue;
+        int64_t diff = diff_us / 1000;
         if (diff < 0) diff = -diff;
         if (diff < best_diff) {
             best = (int)i;
@@ -251,7 +207,7 @@ static void emit_pair(const pending_frame_t *left, const pending_frame_t *right)
 
     pair_t pair = {0};
     pair.session = first->session;
-    pair.aligned_ms = first->aligned_ms;
+    pair.aligned_ms = first->frame.sync_valid ? first->frame.scheduled_us / 1000 : first->aligned_ms;
     pair.unix_ms = current_unix_ms();
     pair.has_left = left != NULL;
     pair.has_right = right != NULL;
@@ -268,8 +224,14 @@ static void emit_pair(const pending_frame_t *left, const pending_frame_t *right)
     if (pair.session != s_pair_session) {
         s_pair_session = pair.session;
         s_pair_sequence = 0;
+        s_session_first_slot = first->frame.scheduled_us;
     }
-    pair.sequence = s_pair_sequence++;
+    if (first->frame.sync_valid && s_session_first_slot >= 0 &&
+        first->frame.scheduled_us >= s_session_first_slot) {
+        pair.sequence = (uint32_t)((first->frame.scheduled_us - s_session_first_slot) /
+                                  (IMU_SAMPLE_INTERVAL_MS * 1000));
+        s_pair_sequence = pair.sequence + 1;
+    } else pair.sequence = s_pair_sequence++;
 
     if (pair.has_left) {
         pair.left.timestamp_ms = pair.aligned_ms;
@@ -280,6 +242,12 @@ static void emit_pair(const pending_frame_t *left, const pending_frame_t *right)
         pair.right.sequence = pair.sequence;
     }
 
+    if ((s_pairs_emitted % 100) == 0) {
+        ESP_LOGI(TAG, "PAIR slot=%" PRId64 " paired=%d delta_us=%" PRId64 " left_scan=%" PRIu32 " right_scan=%" PRIu32,
+                 first->frame.scheduled_us, left && right,
+                 left && right ? right->frame.aligned_us-left->frame.aligned_us : 0,
+                 left ? left->frame.scan_us : 0, right ? right->frame.scan_us : 0);
+    }
     ++s_pairs_emitted;
     if (xQueueSend(s_upload_queue, &pair, 0) != pdTRUE) {
         ++s_pair_dropped;
@@ -333,10 +301,10 @@ static void pair_task(void *arg)
             portENTER_CRITICAL(&s_pending_lock);
             if (use_left) {
                 other_index = pending_nearest(&s_pending_right, left.session,
-                                              left.aligned_ms, &diff);
+                                              &left.frame, &diff);
             } else {
                 other_index = pending_nearest(&s_pending_left, right.session,
-                                              right.aligned_ms, &diff);
+                                              &right.frame, &diff);
             }
             portEXIT_CRITICAL(&s_pending_lock);
 
@@ -469,6 +437,27 @@ static bool append_source_timestamps(char *body, size_t *used,
     return append(body, used, "]");
 }
 
+/* Per-hand diagnostics; dataset export remains exactly 77 columns. */
+static bool append_sync_quality(char *body, size_t *used, const pair_t *batch,
+                                unsigned count, bool left)
+{
+    if (!append(body, used, ",\"sync_quality\":[")) return false;
+    bool first = true;
+    for (unsigned i = 0; i < count; ++i) {
+        const pair_t *p = &batch[i];
+        if (!(left ? p->has_left : p->has_right)) continue;
+        const imu_frame_t *f = left ? &p->left : &p->right;
+        int64_t delta = p->has_left && p->has_right ? p->right.aligned_us - p->left.aligned_us : 0;
+        if (!append(body, used, "%s[%" PRId64 ",%" PRId64 ",%" PRId64 ",%" PRId64 ",%" PRIu32 ",%" PRIu32 ",%" PRIu32 ",%d,%d,%" PRId64 "]",
+                    first ? "" : ",", f->source_us, f->aligned_us,
+                    f->scheduled_us, f->clock_offset_us, f->scan_us,
+                    f->sync_rtt_us, f->sync_age_ms, f->sync_valid,
+                    p->has_left && p->has_right, delta)) return false;
+        first = false;
+    }
+    return append(body, used, "]");
+}
+
 static bool append_calibrated(char *body, size_t *used, const pair_t *batch,
                               unsigned count)
 {
@@ -519,6 +508,7 @@ static bool encode_combined(char *body, const pair_t *batch, unsigned count,
         if (!append_source_timestamps(body, used, batch, count, true)) {
             return false;
         }
+        if (!append_sync_quality(body, used, batch, count, true)) return false;
         if (!append_calibrated(body, used, batch, count)) return false;
         if (!append(body, used, "}")) return false;
         first_hand = false;
@@ -534,6 +524,7 @@ static bool encode_combined(char *body, const pair_t *batch, unsigned count,
         if (!append_source_timestamps(body, used, batch, count, false)) {
             return false;
         }
+        if (!append_sync_quality(body, used, batch, count, false)) return false;
         if (!append(body, used, "}")) return false;
     }
 
@@ -902,6 +893,8 @@ void cloud_upload_submit_remote(const uint8_t src_mac[6], uint64_t session,
                                 const imu_frame_t *frame)
 {
     if (!s_initialized || frame == NULL || src_mac == NULL) return;
+    /* Never invent a left-clock timestamp for an unsynchronized right frame. */
+    if (!frame->sync_valid || frame->scheduled_us < 0) return;
 
     uint64_t current;
     if (!glove_recording_get(&current)) return;
@@ -912,7 +905,7 @@ void cloud_upload_submit_remote(const uint8_t src_mac[6], uint64_t session,
 
     pending_frame_t item = {
         .frame = *frame,
-        .aligned_ms = align_remote_timestamp(frame->timestamp_ms),
+        .aligned_ms = frame->aligned_us / 1000,
         .source_ms = frame->timestamp_ms,
         .session = session,
     };

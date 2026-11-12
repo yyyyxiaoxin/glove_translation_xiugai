@@ -13,6 +13,7 @@
 #include "glove_buttons.h"
 #include "glove_identity.h"
 #include "glove_link.h"
+#include "glove_sync.h"
 #include "glove_recording.h"
 #include "imu_acquisition.h"
 #include "max98357a_audio.h"
@@ -199,15 +200,23 @@ void app_main(void)
 
     print_csv_header();
 
-    TickType_t last_wakeup = xTaskGetTickCount();
+    ESP_ERROR_CHECK(glove_sync_init());
+    /* Sensor reads must preempt TLS/JSON upload work (both previously priority 1). */
+    vTaskPrioritySet(NULL, 6);
 #if CONFIG_GLOVE_HAND_LEFT
     uint32_t last_recording_generation = 0;
     int64_t last_recording_notice_ms = -1000;
 #endif
     while (true) {
         imu_frame_t frame;
+        glove_sync_wait_frame(&frame);
         ret = imu_acquisition_read_frame(&frame);
         if (ret == ESP_OK) {
+            if (frame.sequence % 250 == 0) {
+                ESP_LOGI(TAG, "SCAN hand=%s slot=%" PRId64 " source_us=%" PRId64 " aligned_us=%" PRId64 " scan_us=%" PRIu32 " valid=%d",
+                         GLOVE_HAND_NAME, frame.scheduled_us, frame.source_us,
+                         frame.aligned_us, frame.scan_us, frame.sync_valid);
+            }
             glove_buttons_process_imu_frame(&frame);
 #if IMU_SERIAL_DATA_ENABLED
             /* 逐帧输出给上位机；每行一次写，控制台需使用 921600 波特率。 */
@@ -243,7 +252,5 @@ void app_main(void)
         }
 #endif
 
-        vTaskDelayUntil(&last_wakeup,
-                        pdMS_TO_TICKS(IMU_SAMPLE_INTERVAL_MS));
     }
 }

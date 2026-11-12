@@ -25,6 +25,8 @@ META = ['id', 'received_at', 'received_unix_ms', 'device', 'session', 'hand',
         'valid_mask', 'mag_mask']
 IDENTIFIER = re.compile(r'^[A-Za-z0-9_-]{1,80}$')
 CAL_VALUES = [f'cal_ch{ch}_{axis}' for ch in range(3) for axis in AXES]
+SYNC_VALUES = ['source_us', 'aligned_us', 'scheduled_us', 'clock_offset_us',
+               'scan_us', 'sync_rtt_us', 'sync_age_ms', 'sync_valid', 'paired', 'pair_delta_us']
 DATASET_AXES = ['acc_x', 'acc_y', 'acc_z', 'gyro_x', 'gyro_y', 'gyro_z']
 DATASET_VALUES = [f'f_{ch // 2}_s{ch % 2 + 1}_{axis}' for ch in range(10) for axis in DATASET_AXES] + ['dorsal_' + axis for axis in DATASET_AXES + ['mag_x', 'mag_y', 'mag_z']]
 DATASET_COLUMNS = ['worker', 'v', 'label', 'active_hand', 'sample_id', 'timestamp/ms', 'frame_id', 'hand_type'] + DATASET_VALUES
@@ -67,6 +69,9 @@ def initialize():
         for name in ['calibration_version'] + CAL_VALUES:
             if name not in existing:
                 con.execute('ALTER TABLE frames ADD COLUMN ' + name + (' TEXT' if name == 'calibration_version' else ' REAL'))
+        for name in SYNC_VALUES:
+            if name not in existing:
+                con.execute('ALTER TABLE frames ADD COLUMN ' + name + ' INTEGER')
 
 
 def integer(value, low, high):
@@ -76,7 +81,7 @@ def integer(value, low, high):
 
 
 def build_rows(device, session, hand, frames, calibrated, version,
-               source_timestamps, now, received_ms):
+               source_timestamps, now, received_ms, sync_quality=None):
     if not isinstance(frames, list) or not 1 <= len(frames) <= 100:
         raise ValueError('Expected 1 to 100 frames')
     if calibrated is not None:
@@ -87,6 +92,8 @@ def build_rows(device, session, hand, frames, calibrated, version,
     if source_timestamps is not None:
         if not isinstance(source_timestamps, list) or len(source_timestamps) != len(frames):
             raise ValueError('Source timestamp batch length mismatch')
+    if sync_quality is not None and (not isinstance(sync_quality, list) or len(sync_quality) != len(frames)):
+        raise ValueError('Sync quality batch length mismatch')
 
     rows = []
     for index, frame in enumerate(frames):
@@ -120,10 +127,23 @@ def build_rows(device, session, hand, frames, calibrated, version,
                     raise ValueError('Invalid calibrated value')
                 if not valid & (1 << (i // 6)) and value is not None:
                     raise ValueError('Invalid channel has calibrated data')
+        quality = [None] * len(SYNC_VALUES)
+        if sync_quality is not None:
+            quality = sync_quality[index]
+            if not isinstance(quality, list) or len(quality) != len(SYNC_VALUES):
+                raise ValueError('Expected 10 sync quality values')
+            for i, value in enumerate(quality):
+                integer(value, -2**62, 2**62)
+                if i in (0, 1, 4, 5, 6) and value < 0:
+                    raise ValueError('Negative sync metric')
+                if i in (7, 8) and value not in (0, 1):
+                    raise ValueError('Invalid sync flag')
+            if quality[8] and not quality[7]:
+                raise ValueError('Paired frame must have valid synchronization')
         rows.append([now.isoformat(timespec='milliseconds'), received_ms, device,
                      session, hand, seq, timestamp, source, epoch, valid, mag]
                     + clean + [version if calibrated is not None else None]
-                    + physical)
+                    + physical + quality)
     return rows
 
 
@@ -157,7 +177,7 @@ def ingest(payload):
                                    entry.get('calibrated'),
                                    entry.get('calibration_version'),
                                    entry.get('source_timestamps'),
-                                   now, received_ms))
+                                   now, received_ms, entry.get('sync_quality')))
         # 同一 sequence 的左右手相邻写入，导出 CSV 可直接按行配对。
         rows.sort(key=lambda row: (row[5], 0 if row[4] == 'left' else 1))
     else:
@@ -171,9 +191,9 @@ def ingest(payload):
                           payload.get('calibrated'),
                           payload.get('calibration_version'),
                           payload.get('source_timestamps'),
-                          now, received_ms)
+                          now, received_ms, payload.get('sync_quality'))
 
-    columns = META[1:] + VALUES + ['calibration_version'] + CAL_VALUES
+    columns = META[1:] + VALUES + ['calibration_version'] + CAL_VALUES + SYNC_VALUES
     with connect() as con:
         before = con.total_changes
         con.executemany('INSERT OR IGNORE INTO frames (' + ','.join(columns)
@@ -383,10 +403,10 @@ class Handler(BaseHTTPRequestHandler):
         dataset = params.get('format', ['dataset'])[0] == 'dataset'
         channel = params.get('channel', ['all'])[0]
         if channel == 'all':
-            columns = META + VALUES + ['calibration_version'] + CAL_VALUES
+            columns = META + VALUES + ['calibration_version'] + CAL_VALUES + SYNC_VALUES
         else:
             ch = integer(int(channel), 0, 10)
-            columns = META + [name for name in VALUES if name.startswith(f'ch{ch}_')] + ['calibration_version'] + [name for name in CAL_VALUES if name.startswith(f'cal_ch{ch}_')]
+            columns = META + [name for name in VALUES if name.startswith(f'ch{ch}_')] + ['calibration_version'] + [name for name in CAL_VALUES if name.startswith(f'cal_ch{ch}_')] + SYNC_VALUES
         self.send_response(200)
         self.send_header('Content-Type', 'text/csv; charset=utf-8')
         self.send_header('Content-Disposition', 'attachment; filename="imu_' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d_%H%M%S') + '.csv"')

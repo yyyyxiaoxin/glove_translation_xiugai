@@ -11,9 +11,10 @@
 #include "esp_wifi.h"
 #include "glove_identity.h"
 #include "glove_recording.h"
+#include "glove_sync.h"
 
 /*
- * 左右手 ESP-NOW 帧格式（v1，约 174 字节，远小于 250 字节上限）：
+ * 左右手 ESP-NOW 帧格式（v2，232 字节，小于 250 字节上限）：
  *   magic/version/hand/session/sequence/timestamp_ms/valid_mask/mag_mask
  *   + 11 路原始 int16 数据。
  *
@@ -22,7 +23,7 @@
  *   CH10     : ax,ay,az,gx,gy,gz,mx,my,mz
  */
 #define GL_LINK_MAGIC    0x314C5647u   /* "GVL1" */
-#define GL_LINK_VERSION  1u
+#define GL_LINK_VERSION  2u
 #define GL_VALUE_COUNT   (IMU_MPU6050_COUNT * 6 + 9)
 
 /* 控制包：左手 -> 右手，开始/停止录制；录制期间每秒一次心跳。 */
@@ -63,12 +64,15 @@ typedef struct {
     uint32_t valid_mask;
     int64_t  timestamp_ms;
     uint32_t mag_mask;
+    int64_t source_us, aligned_us, scheduled_us, clock_offset_us;
+    uint32_t scan_us, sync_rtt_us, sync_age_ms;
+    uint32_t sync_valid;
     int16_t  values[GL_VALUE_COUNT];
 } glove_link_packet_t;
 
-_Static_assert(offsetof(glove_link_packet_t, values) == 36,
+_Static_assert(offsetof(glove_link_packet_t, values) == 88,
                "unexpected ESP-NOW packet layout");
-_Static_assert(sizeof(glove_link_packet_t) == 176,
+_Static_assert(sizeof(glove_link_packet_t) == 232,
                "unexpected ESP-NOW packet size");
 _Static_assert(sizeof(glove_link_packet_t) <= ESP_NOW_MAX_DATA_LEN,
                "ESP-NOW frame exceeds v1 payload limit");
@@ -192,6 +196,14 @@ static void handle_frame(const esp_now_recv_info_t *info, const uint8_t *data, i
     imu_frame_t frame = {0};
     frame.sequence = packet->sequence;
     frame.timestamp_ms = packet->timestamp_ms;
+    frame.source_us = packet->source_us;
+    frame.aligned_us = packet->aligned_us;
+    frame.scheduled_us = packet->scheduled_us;
+    frame.clock_offset_us = packet->clock_offset_us;
+    frame.scan_us = packet->scan_us;
+    frame.sync_rtt_us = packet->sync_rtt_us;
+    frame.sync_age_ms = packet->sync_age_ms;
+    frame.sync_valid = packet->sync_valid != 0;
     unpack_values(packet->values, &frame);
     for (int ch = 0; ch < IMU_TOTAL_CHANNELS; ++ch) {
         frame.channel[ch].valid = (packet->valid_mask >> ch) & 1u;
@@ -261,6 +273,7 @@ static void handle_control(const uint8_t *data, int len)
 
 static void link_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int len)
 {
+    int64_t received_us = esp_timer_get_time();
     if (info == NULL || data == NULL || len < (int)sizeof(uint32_t)) {
         ++s_rx_invalid;
         return;
@@ -268,7 +281,9 @@ static void link_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, i
 
     uint32_t magic;
     memcpy(&magic, data, sizeof(magic));
-    if (magic == GL_LINK_MAGIC) {
+    if (magic == GLOVE_SYNC_MAGIC) {
+        glove_sync_receive(data, len, received_us);
+    } else if (magic == GL_LINK_MAGIC) {
         handle_frame(info, data, len);
     } else if (magic == GL_CONTROL_MAGIC) {
         handle_control(data, len);
@@ -344,6 +359,14 @@ esp_err_t glove_link_send_frame(const imu_frame_t *frame)
     packet.session = session;
     packet.sequence = frame->sequence;
     packet.timestamp_ms = frame->timestamp_ms;
+    packet.source_us = frame->source_us;
+    packet.aligned_us = frame->aligned_us;
+    packet.scheduled_us = frame->scheduled_us;
+    packet.clock_offset_us = frame->clock_offset_us;
+    packet.scan_us = frame->scan_us;
+    packet.sync_rtt_us = frame->sync_rtt_us;
+    packet.sync_age_ms = frame->sync_age_ms;
+    packet.sync_valid = frame->sync_valid;
     packet.valid_mask = channel_mask(frame, false);
     packet.mag_mask = channel_mask(frame, true);
     fill_values(frame, packet.values);

@@ -30,6 +30,14 @@ typedef struct {
 typedef struct {
     uint32_t sequence;
     int64_t timestamp_ms;
+    int64_t source_us;
+    int64_t aligned_us;
+    int64_t scheduled_us;
+    int64_t clock_offset_us;
+    uint32_t scan_us;
+    uint32_t sync_rtt_us;
+    uint32_t sync_age_ms;
+    bool sync_valid;
     imu_channel_data_t channel[IMU_TOTAL_CHANNELS];
 } imu_frame_t;
 

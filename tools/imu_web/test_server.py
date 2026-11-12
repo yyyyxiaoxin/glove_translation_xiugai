@@ -228,6 +228,26 @@ class RecorderTest(unittest.TestCase):
         with self.assertRaises(HTTPError): urlopen(self.url+'/api/records?start=3000&end=1000')
         self.assertIn(b'selectedRecords', urlopen(self.url+'/records.js').read())
 
+    def test_sync_quality_archive_and_dataset_compatibility(self):
+        frame = [2000, 2, 2047, 0, None] + [42]*69
+        quality = [150003500, 2003500, 2000000, -148000000, 7100, 800, 250, 1, 1, -70]
+        payload = {'device':'sync-right', 'session':'sync-test', 'hand':'right',
+                   'frames':[frame], 'sync_quality':[quality]}
+        self.assertEqual(json.load(self.post(payload))['inserted'], 1)
+        archive = list(csv.DictReader(io.StringIO(urlopen(self.url+'/api/export.csv?session=sync-test&format=archive').read().decode('utf-8-sig'))))
+        self.assertEqual([archive[0][k] for k in self.app.SYNC_VALUES], [str(v) for v in quality])
+        dataset = csv.DictReader(io.StringIO(urlopen(self.url+'/api/export.csv?session=sync-test').read().decode('utf-8-sig')))
+        row = next(dataset)
+        self.assertEqual(dataset.fieldnames, self.app.DATASET_COLUMNS)
+        self.assertEqual(len(row), 77)
+        self.assertEqual(row['f_0_s1_acc_x'], '42')
+        payload['session'] = 'sync-bad'
+        payload['sync_quality'] = [quality[:-1]]
+        with self.assertRaises(HTTPError): self.post(payload)
+        payload['sync_quality'] = [quality.copy()]
+        payload['sync_quality'][0][7] = 0
+        with self.assertRaises(HTTPError): self.post(payload)
+
 
 if __name__ == '__main__':
     unittest.main()
