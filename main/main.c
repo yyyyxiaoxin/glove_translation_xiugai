@@ -62,22 +62,47 @@ static void print_csv_header(void)
     printf(",dorsal_mag_x,dorsal_mag_y,dorsal_mag_z\n");
 }
 
+/*
+ * 一帧约 500 字节，放在静态缓冲区里一次写出；逐值 printf 会产生 70 次
+ * 阻塞串口写，50 Hz 下会把采样节奏拖垮。
+ */
 static void print_raw_frame(const imu_frame_t *frame)
 {
-    printf("[DATA]%" PRId64 ",%s", frame->timestamp_ms, GLOVE_HAND_NAME);
+    static char line[640];
+    size_t used = 0;
+
+    int written = snprintf(line, sizeof(line), "[DATA]%" PRId64 ",%s",
+                           frame->timestamp_ms, GLOVE_HAND_NAME);
+    if (written < 0 || (size_t)written >= sizeof(line)) {
+        return;
+    }
+    used = (size_t)written;
+
     for (int channel = 0; channel < IMU_MPU6050_COUNT; ++channel) {
         const imu_channel_data_t *data = &frame->channel[channel];
-        printf(",%d,%d,%d,%d,%d,%d",
-               data->ax, data->ay, data->az,
-               data->gx, data->gy, data->gz);
+        written = snprintf(line + used, sizeof(line) - used,
+                           ",%d,%d,%d,%d,%d,%d",
+                           data->ax, data->ay, data->az,
+                           data->gx, data->gy, data->gz);
+        if (written < 0 || (size_t)written >= sizeof(line) - used) {
+            return;
+        }
+        used += (size_t)written;
     }
 
     const imu_channel_data_t *dorsal =
         &frame->channel[IMU_ICM20948_INDEX];
-    printf(",%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
-           dorsal->ax, dorsal->ay, dorsal->az,
-           dorsal->gx, dorsal->gy, dorsal->gz,
-           dorsal->mx, dorsal->my, dorsal->mz);
+    written = snprintf(line + used, sizeof(line) - used,
+                       ",%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+                       dorsal->ax, dorsal->ay, dorsal->az,
+                       dorsal->gx, dorsal->gy, dorsal->gz,
+                       dorsal->mx, dorsal->my, dorsal->mz);
+    if (written < 0 || (size_t)written >= sizeof(line) - used) {
+        return;
+    }
+    used += (size_t)written;
+
+    fwrite(line, 1, used, stdout);
     fflush(stdout);
 }
 
@@ -175,7 +200,6 @@ void app_main(void)
     print_csv_header();
 
     TickType_t last_wakeup = xTaskGetTickCount();
-    int64_t last_serial_ms = -1000;
 #if CONFIG_GLOVE_HAND_LEFT
     uint32_t last_recording_generation = 0;
     int64_t last_recording_notice_ms = -1000;
@@ -185,12 +209,10 @@ void app_main(void)
         ret = imu_acquisition_read_frame(&frame);
         if (ret == ESP_OK) {
             glove_buttons_process_imu_frame(&frame);
-            /* Serial output is diagnostic only; preserve every network frame.
-             * A full CSV line at 115200 baud can block for tens of ms. */
-            if (IMU_SERIAL_DATA_ENABLED && frame.timestamp_ms - last_serial_ms >= 1000) {
-                print_raw_frame(&frame);
-                last_serial_ms = frame.timestamp_ms;
-            }
+#if IMU_SERIAL_DATA_ENABLED
+            /* 逐帧输出给上位机；每行一次写，控制台需使用 921600 波特率。 */
+            print_raw_frame(&frame);
+#endif
 #if CONFIG_GLOVE_HAND_LEFT
             cloud_upload_submit(&frame);
 #else

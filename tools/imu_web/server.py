@@ -199,9 +199,11 @@ def heartbeat(payload):
 def annotate(payload):
     if not isinstance(payload, dict):
         raise ValueError('Expected object')
-    session = payload.get('session')
-    if not isinstance(session, str) or not IDENTIFIER.fullmatch(session):
-        raise ValueError('Invalid session')
+    sessions = payload.get('sessions', [payload.get('session')])
+    if not isinstance(sessions, list) or not 1 <= len(sessions) <= 500 or any(
+            not isinstance(s, str) or not IDENTIFIER.fullmatch(s) for s in sessions):
+        raise ValueError('Expected 1 to 500 valid sessions')
+    sessions = list(dict.fromkeys(sessions))
     values = []
     for key in ('worker', 'label', 'v'):
         value = payload.get(key)
@@ -214,15 +216,22 @@ def annotate(payload):
     if active_hand not in ('left', 'right', 'both'):
         raise ValueError('Invalid active_hand')
     with connect() as con:
-        if not con.execute('SELECT 1 FROM frames WHERE session=? LIMIT 1', (session,)).fetchone():
+        found = con.execute('SELECT DISTINCT session FROM frames WHERE session IN (' + ','.join('?' for _ in sessions) + ')', sessions).fetchall()
+        if len(found) != len(sessions):
             raise ValueError('Recording not found')
-        con.execute('INSERT INTO annotations (session,worker,label,v,active_hand) VALUES (?,?,?,?,?) ON CONFLICT(session) DO UPDATE SET worker=excluded.worker,label=excluded.label,v=excluded.v,active_hand=excluded.active_hand', [session] + values + [active_hand])
-    return {'ok': True}
+        con.executemany('INSERT INTO annotations (session,worker,label,v,active_hand) VALUES (?,?,?,?,?) ON CONFLICT(session) DO UPDATE SET worker=excluded.worker,label=excluded.label,v=excluded.v,active_hand=excluded.active_hand', [[session] + values + [active_hand] for session in sessions])
+    return {'ok': True, 'updated': len(sessions)}
 
 
 def filters(params):
     clauses, args = [], []
-    for key in ('device', 'session', 'hand'):
+    sessions = params.get('session', [])
+    if sessions:
+        if not 1 <= len(sessions) <= 500 or any(not IDENTIFIER.fullmatch(s) for s in sessions):
+            raise ValueError('Expected 1 to 500 valid sessions')
+        clauses.append('session IN (' + ','.join('?' for _ in sessions) + ')')
+        args.extend(sessions)
+    for key in ('device', 'hand'):
         if params.get(key, [''])[0]:
             clauses.append(key + '=?')
             args.append(params[key][0])
@@ -235,6 +244,42 @@ def filters(params):
             clauses.append('session IN (SELECT session FROM annotations WHERE ' + key + '=?)')
             args.append(params[key][0])
     return (' WHERE ' + ' AND '.join(clauses) if clauses else ''), args
+
+
+def recordings(params):
+    """Filter whole sessions by their first server receive time, never split frames."""
+    clauses, args = [], []
+    start, end = params.get('start', [''])[0], params.get('end', [''])[0]
+    if start and end and int(start) > int(end):
+        raise ValueError('Start must not be after end')
+    for value, op in ((start, '>='), (end, '<=')):
+        if value:
+            clauses.append('r.started_ms' + op + '?')
+            args.append(integer(int(value), 0, 2**63 - 1))
+    for key in ('worker', 'label', 'v', 'active_hand'):
+        if params.get(key, [''])[0]:
+            clauses.append('a.' + key + '=?')
+            args.append(params[key][0])
+    state = params.get('annotated', [''])[0]
+    if state in ('yes', 'no'):
+        clauses.append('a.session IS ' + ('NOT NULL' if state == 'yes' else 'NULL'))
+    where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
+    limit = max(1, min(100, int(params.get('limit', ['50'])[0])))
+    offset = max(0, int(params.get('offset', ['0'])[0]))
+    order = 'ASC' if params.get('sort', ['desc'])[0] == 'asc' else 'DESC'
+    base = '''WITH r AS (SELECT session, min(received_at) started_at,
+        max(received_at) ended_at, min(received_unix_ms) started_ms,
+        sum(CASE WHEN hand='left' THEN 1 ELSE 0 END) AS left_frames,
+        sum(CASE WHEN hand='right' THEN 1 ELSE 0 END) AS right_frames
+        FROM frames GROUP BY session) '''
+    source = ' FROM r LEFT JOIN annotations a ON a.session=r.session' + where
+    with connect() as con:
+        con.execute('BEGIN')
+        total = con.execute(base + 'SELECT count(*)' + source, args).fetchone()[0]
+        rows = con.execute(base + 'SELECT r.*,a.worker,a.label,a.v,a.active_hand' + source
+                           + ' ORDER BY r.started_ms ' + order + ',r.session ' + order
+                           + ' LIMIT ? OFFSET ?', args + [limit, offset]).fetchall()
+    return {'records': [dict(r) for r in rows], 'total': total, 'limit': limit, 'offset': offset}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -254,6 +299,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
+        if path == '/api/export.csv':
+            try:
+                size = int(self.headers.get('Content-Length', '0'))
+                if not 0 < size <= 120000:
+                    return self.respond(413, {'error': 'Body too large or empty'})
+                self.connection.settimeout(15)
+                params = parse_qs(self.rfile.read(size).decode('utf-8'))
+                if not params.get('session'):
+                    raise ValueError('Select at least one recording')
+                where, args = filters(params)
+                return self.export(where, args, params)
+            except (ValueError, TypeError, UnicodeError) as exc:
+                return self.respond(400, {'error': str(exc)})
         if path not in ('/api/ingest', '/api/heartbeat', '/api/annotations'):
             return self.respond(404, {'error': 'Not found'})
         expected = ANNOTATION_TOKEN if path == '/api/annotations' else TOKEN
@@ -278,15 +336,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path == '/calibration_coefficients.json':
                 return self.respond(200, Path(__file__).with_name('calibration_coefficients.json').read_bytes())
-            if parsed.path in ('/', '/index.html', '/app.js', '/style.css', '/calibration_view.js'):
+            if parsed.path in ('/', '/index.html', '/app.js', '/records.js', '/style.css', '/calibration_view.js'):
                 name = 'index.html' if parsed.path == '/' else parsed.path[1:]
-                kind = {'index.html': 'text/html', 'app.js': 'text/javascript', 'calibration_view.js': 'text/javascript', 'style.css': 'text/css'}[name]
+                kind = {'index.html': 'text/html', 'app.js': 'text/javascript', 'records.js': 'text/javascript', 'calibration_view.js': 'text/javascript', 'style.css': 'text/css'}[name]
                 return self.respond(200, Path(__file__).with_name(name).read_bytes(), kind + '; charset=utf-8')
             if parsed.path == '/api/health':
                 with connect() as con:
                     con.execute('SELECT 1 FROM frames LIMIT 1').fetchone()
                 return self.respond(200, {'ok': True})
             where, args = filters(params)
+            if parsed.path == '/api/records':
+                return self.respond(200, recordings(params))
             if parsed.path == '/api/status':
                 with connect() as con:
                     total = con.execute('SELECT count(*) FROM frames').fetchone()[0]

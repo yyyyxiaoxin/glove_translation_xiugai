@@ -13,20 +13,20 @@ echo "即将部署 server.py / app.js / index.html 到 ${HOST}:/opt/glove-imu/"
 echo "接下来 SSH 会提示输入服务器密码（输入时不显示）。"
 echo
 
-tar czf - server.py app.js index.html | ssh -T -o ServerAliveInterval=30 "$HOST" '
+tar czf - server.py app.js records.js index.html style.css | ssh -T -o ServerAliveInterval=30 "$HOST" '
 set -e
 cd /opt/glove-imu
 ts=$(date +%Y%m%d-%H%M%S)
 mkdir -p ".deploy-backup-$ts"
-for f in server.py app.js index.html; do
+for f in server.py app.js records.js index.html style.css; do
     if [ -f "$f" ]; then cp -p "$f" ".deploy-backup-$ts/$f"; fi
 done
 tar xzf - -C /opt/glove-imu
-chmod 644 server.py app.js index.html
+chmod 644 server.py app.js records.js index.html style.css
 systemctl restart glove-imu
 sleep 2
 if ! systemctl is-active --quiet glove-imu; then
-    for f in server.py app.js index.html; do
+    for f in server.py app.js records.js index.html style.css; do
         if [ -f ".deploy-backup-$ts/$f" ]; then cp -p ".deploy-backup-$ts/$f" "$f"; fi
     done
     systemctl restart glove-imu

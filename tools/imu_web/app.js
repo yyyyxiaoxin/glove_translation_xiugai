@@ -94,54 +94,6 @@ async function refresh(){
    $('frameTime-'+hand).textContent=frame?`设备 ${frame.device} · 记录 ${sessionLabel(frame.session)} · 序号 ${frame.sequence} · 对齐时间 ${frame.timestamp_ms} ms · 接收 ${fmtTime(frame.received_at)}`:'此记录尚无该手数据';
   }
 
-  /* 同一 session 的左右手合并为一条“采集记录”，一次下载双手 CSV。 */
-  const grouped=new Map();
-  for(const s of status.sessions){
-   let r=grouped.get(s.session);
-   if(!r){r={session:s.session,started_at:s.started_at,ended_at:s.ended_at,left:0,right:0};grouped.set(s.session,r);}
-   if(s.hand==='left')r.left+=s.frames;
-   else if(s.hand==='right')r.right+=s.frames;
-   if(String(s.started_at)<String(r.started_at))r.started_at=s.started_at;
-   if(String(s.ended_at)>String(r.ended_at))r.ended_at=s.ended_at;
-  }
-  const records=[...grouped.values()].sort((a,b)=>String(b.ended_at).localeCompare(String(a.ended_at)));
-  $('sessions').replaceChildren();
-  for(const r of records){
-   const tr=document.createElement('tr');
-   const name=cell(tr,sessionLabel(r.session));
-   name.title=r.session;
-   cell(tr,fmtTime(r.started_at));
-   cell(tr,fmtTime(r.ended_at));
-   const annotation=status.annotations?.[r.session];
-   cell(tr,annotation?.worker||'未标注');
-   cell(tr,annotation?.label||'未标注');
-   cell(tr,annotation?({slow:'慢速',medium:'中速',high:'快速'}[annotation.v]||annotation.v):'未标注');
-   cell(tr,({left:'左手',right:'右手',both:'双手'}[annotation?.active_hand])||'未标注');
-   cell(tr,r.left.toLocaleString());
-   cell(tr,r.right.toLocaleString());
-   cell(tr,(r.left+r.right).toLocaleString());
-   const action=document.createElement('td');
-   const link=document.createElement('a');
-   link.href=`api/export.csv?session=${encodeURIComponent(r.session)}&channel=all`;
-   link.textContent='↓ 双手 CSV';
-   link.title='下载该采集记录左右手合并 CSV';
-   action.append(link);
-   const edit=document.createElement('button');edit.textContent='标注';edit.className='annotate-button';
-   edit.onclick=()=>{
-    $('annotationSession').value=r.session;
-    $('annotationWorker').value=annotation?.worker||'';
-    $('annotationLabel').value=annotation?.label||'';
-    $('annotationSpeed').value=annotation?.v||'medium';
-    $('annotationHand').value=annotation?.active_hand||'';
-    $('annotationMessage').textContent='';
-    $('annotationEditor').hidden=false;
-    $('annotationWorker').focus();
-   };
-   action.append(edit);
-   tr.append(action);
-   $('sessions').append(tr);
-  }
-
   drawAll();
   $('error').hidden=true;
  }catch(e){
@@ -211,18 +163,6 @@ $('export').onclick=()=>{
  window.location.href='api/export.csv?'+p;
 };
 
-$('annotationForm').onsubmit=async event=>{
- event.preventDefault();
- const button=$('saveAnnotation');button.disabled=true;
- try{
-  const payload={session:$('annotationSession').value,worker:$('annotationWorker').value.trim(),label:$('annotationLabel').value.trim(),v:$('annotationSpeed').value,active_hand:$('annotationHand').value};
-  const response=await fetch('api/annotations',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+$('annotationKey').value.trim()},body:JSON.stringify(payload)});
-  if(!response.ok)throw new Error(response.status===401?'标注口令不正确':(await response.json()).error||'保存失败');
-  $('annotationMessage').textContent='标签已保存，左右手共用本次记录标签。';
-  await refresh();
- }catch(error){$('annotationMessage').textContent=error.message;}
- finally{button.disabled=false;}
-};
 switchView();
 refresh();
 setInterval(refresh,2000);

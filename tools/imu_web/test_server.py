@@ -9,6 +9,7 @@ import threading
 import unittest
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 
 
 class RecorderTest(unittest.TestCase):
@@ -172,6 +173,60 @@ class RecorderTest(unittest.TestCase):
         self.assertEqual(row['frame_id'],'9')
         self.assertEqual(row['sample_id'],'gt_mapping-test')
         self.assertEqual(row['worker'],'')
+
+    def test_batch_annotation_selection_and_atomic_failure(self):
+        frame = [321, 1, 2047, 0, None] + list(range(69))
+        for session in ('batch-a', 'batch-b', 'batch-c'):
+            for hand in ('left', 'right'):
+                json.load(self.post({'device': 'batch-'+hand, 'session': session, 'hand': hand, 'frames': [frame]}))
+        payload = {'sessions': ['batch-a', 'batch-b', 'batch-a'], 'worker': 'tester', 'label': 'hello', 'v': 'slow', 'active_hand': 'both'}
+        def save(token='label-test'):
+            return urlopen(Request(self.url+'/api/annotations', data=json.dumps(payload).encode(), headers={'Authorization': 'Bearer '+token}))
+        with self.assertRaises(HTTPError) as error:
+            save('wrong')
+        self.assertEqual(error.exception.code, 401)
+        self.assertEqual(json.load(save())['updated'], 2)
+        params = urlencode({'session': ['batch-b', 'batch-a']}, doseq=True)
+        response = urlopen(Request(self.url+'/api/export.csv', data=params.encode(), headers={'Content-Type': 'application/x-www-form-urlencoded'}))
+        reader = csv.DictReader(io.StringIO(response.read().decode('utf-8-sig')))
+        rows = list(reader)
+        self.assertEqual(reader.fieldnames, self.app.DATASET_COLUMNS)
+        self.assertEqual(len(rows), 4)
+        self.assertEqual({r['sample_id'] for r in rows}, {'gt_batch-a', 'gt_batch-b'})
+        self.assertTrue(all([r[k] for k in ('worker','v','label','active_hand')]==['tester','slow','hello','both'] for r in rows))
+        self.assertEqual([r['hand_type'] for r in rows], ['left','right','left','right'])
+        self.assertTrue(all(r['f_0_s1_acc_x']=='0' and r['timestamp/ms']=='321' and r['dorsal_mag_x']=='' for r in rows))
+        payload['sessions'] = ['batch-a', 'missing-session']
+        payload['worker'] = 'must-not-save'
+        with self.assertRaises(HTTPError): save()
+        with self.app.connect() as con:
+            self.assertEqual(con.execute("SELECT worker FROM annotations WHERE session='batch-a'").fetchone()[0], 'tester')
+        payload['sessions'] = []
+        with self.assertRaises(HTTPError): save()
+        with self.assertRaises(HTTPError):
+            urlopen(self.url+'/api/export.csv?session=bad%27session')
+        with self.assertRaises(HTTPError):
+            urlopen(Request(self.url+'/api/export.csv', data=b'format=dataset'))
+
+    def test_record_time_filter_pagination_and_complete_session(self):
+        for i in range(3):
+            frame = [200+i, i, 2047, 0, None] + [i]*69
+            for hand in ('left','right'):
+                json.load(self.post({'device':'history-'+hand, 'session':f'history-{i}', 'hand':hand, 'frames':[frame]}))
+        with self.app.connect() as con:
+            for i in range(3):
+                con.execute('UPDATE frames SET received_unix_ms=?,received_at=? WHERE session=?', (1000+i*1000, f'2026-01-01T00:00:0{i}+00:00', f'history-{i}'))
+            con.execute("UPDATE frames SET received_unix_ms=9000 WHERE session='history-1' AND hand='right'")
+        data = json.load(urlopen(self.url+'/api/records?start=1000&end=3000&sort=asc&limit=1&offset=1'))
+        self.assertEqual(data['total'], 3)
+        self.assertEqual(data['records'][0]['session'], 'history-1')
+        self.assertEqual(data['records'][0]['left_frames'], 1)
+        self.assertEqual(data['records'][0]['right_frames'], 1)
+        data = json.load(urlopen(self.url+'/api/records?start=2000&end=2000'))
+        self.assertEqual([r['session'] for r in data['records']], ['history-1'])
+        self.assertEqual(json.load(urlopen(self.url+'/api/records?worker=does-not-exist'))['total'], 0)
+        with self.assertRaises(HTTPError): urlopen(self.url+'/api/records?start=3000&end=1000')
+        self.assertIn(b'selectedRecords', urlopen(self.url+'/records.js').read())
 
 
 if __name__ == '__main__':

@@ -27,8 +27,16 @@
 #define TCA2_ICM_CHANNEL        2
 
 #define IMU_SAMPLE_INTERVAL_MS  20
-/* Enable only for serial diagnosis; full CSV output blocks the sampler. */
-#define IMU_SERIAL_DATA_ENABLED 0
+
+/*
+ * 串口逐帧输出原始数据，供上位机采集：
+ *   [DATA]<timestamp_ms>,<left|right>,<IMU0 六轴>,...,<IMU9 六轴>,<IMU10 九轴>\n
+ * 每行约 400~500 字节，50 Hz 约 20~25 KB/s。控制台波特率必须同步改为
+ * 921600（sdkconfig 中 CONFIG_ESP_CONSOLE_UART_BAUDRATE）；
+ * 115200 下一行要写 40 ms 以上，采样会掉到 10 Hz 左右。
+ */
+#define IMU_SERIAL_DATA_ENABLED   1
+#define IMU_SERIAL_DATA_BAUDRATE  921600
 
 /*
  * 手套业务按键：GPIO内部上拉，按键另一端接GND，低电平有效。

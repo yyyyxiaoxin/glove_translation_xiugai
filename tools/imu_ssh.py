@@ -15,7 +15,7 @@ client.connect(**config, timeout=20, look_for_keys=False, allow_agent=False)
 try:
     if sys.argv[1] == 'upload-web':
         with client.open_sftp() as sftp:
-            for name in ('server.py', 'index.html', 'app.js', 'style.css', 'calibration_view.js', 'calibration_coefficients.json', 'glove-imu.service'):
+            for name in ('server.py', 'index.html', 'app.js', 'records.js', 'style.css', 'calibration_view.js', 'calibration_coefficients.json', 'glove-imu.service'):
                 sftp.put(str(ROOT / 'tools/imu_web' / name), '/opt/glove-imu/' + name)
             sftp.put(str(ROOT / 'build/imu.env'), '/etc/glove-imu.env')
             sftp.chmod('/etc/glove-imu.env', 0o600)

@@ -17,6 +17,16 @@ idf.py -B build_right -p COM17 flash
 
 左手 GPIO4 切换开始/结束采集并播放中文提示，GPIO5 为备用停止。CH0–CH9 为指部 MPU6050，CH10 为掌部 ICM20948。网页使用保存的左手 CH0–CH7 六面标定系数展示初步校正效果；原始数据仍保留。
 
+## 串口原始数据
+
+左右手都按 50 Hz 逐帧打印一行：
+
+```
+[DATA]<timestamp_ms>,<left|right>,<IMU0 六轴>,...,<IMU9 六轴>,<IMU10 九轴>
+```
+
+共 2 + 69 个字段：本机毫秒时间戳、手别，随后 CH0–CH9 各 6 个值（ax,ay,az,gx,gy,gz），CH10 为 9 个值（含 mx,my,mz）。每行约 300–500 字节，50 Hz 约 20 KB/s，因此控制台使用 UART0（GPIO43 TX / GPIO44 RX）并配置为 **921600** 波特率（`CONFIG_ESP_CONSOLE_UART_CUSTOM` + `CONFIG_ESP_CONSOLE_UART_BAUDRATE`）。串口工具需设为 921600；ROM 启动信息仍以 115200 输出，所以上电最初的几个字节会显示乱码，属正常现象。将 `main/board_config.h` 的 `IMU_SERIAL_DATA_ENABLED` 设为 0 可关闭逐帧输出。
+
 ## 网页服务
 
 `tools/imu_web/server.py` 使用 Python 标准库与 SQLite，部署在独立 `/imu/` 路径。配置 `IMU_TOKEN`（设备上传）、`IMU_ANNOTATION_TOKEN`（网页标注）、`IMU_DB`（数据库路径）。参考 `tools/imu_web/glove-imu.service`。
