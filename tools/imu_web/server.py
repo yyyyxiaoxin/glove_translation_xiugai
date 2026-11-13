@@ -61,6 +61,12 @@ def initialize():
         con.execute('CREATE INDEX IF NOT EXISTS frames_session ON frames(session,id)')
         con.execute('CREATE TABLE IF NOT EXISTS presence (device TEXT PRIMARY KEY, hand TEXT NOT NULL, received_unix_ms INTEGER NOT NULL, recording INTEGER NOT NULL)')
         con.execute('CREATE TABLE IF NOT EXISTS annotations (session TEXT PRIMARY KEY, worker TEXT NOT NULL, label TEXT NOT NULL, v TEXT NOT NULL)')
+        con.execute('CREATE TABLE IF NOT EXISTS deleted_sessions (session TEXT PRIMARY KEY, deleted_at TEXT NOT NULL)')
+        con.execute('CREATE TABLE IF NOT EXISTS samples (sample_id INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL UNIQUE)')
+        # Assign legacy recordings in chronological order once; never renumber on deletion.
+        missing = con.execute('SELECT session FROM frames WHERE session NOT IN (SELECT session FROM samples) '
+                              'GROUP BY session ORDER BY min(received_unix_ms),min(id)').fetchall()
+        con.executemany('INSERT INTO samples (session) VALUES (?)', [(r['session'],) for r in missing])
         if 'active_hand' not in {r[1] for r in con.execute('PRAGMA table_info(annotations)')}:
             con.execute("ALTER TABLE annotations ADD COLUMN active_hand TEXT NOT NULL DEFAULT ''")
         existing = {r[1] for r in con.execute('PRAGMA table_info(frames)')}
@@ -195,6 +201,12 @@ def ingest(payload):
 
     columns = META[1:] + VALUES + ['calibration_version'] + CAL_VALUES + SYNC_VALUES
     with connect() as con:
+        # Serialize with deletion so an in-flight/retried upload cannot resurrect a record.
+        con.execute('BEGIN IMMEDIATE')
+        if con.execute('SELECT 1 FROM deleted_sessions WHERE session=?', (session,)).fetchone():
+            return {'accepted': len(rows), 'inserted': 0, 'discarded_deleted': True}
+        if not con.execute('SELECT 1 FROM samples WHERE session=?', (session,)).fetchone():
+            con.execute('INSERT INTO samples (session) VALUES (?)', (session,))
         before = con.total_changes
         con.executemany('INSERT OR IGNORE INTO frames (' + ','.join(columns)
                         + ') VALUES (' + ','.join('?' for _ in columns) + ')', rows)
@@ -266,6 +278,25 @@ def filters(params):
     return (' WHERE ' + ' AND '.join(clauses) if clauses else ''), args
 
 
+def delete_recordings(payload):
+    if not isinstance(payload, dict) or payload.get('confirm') is not True:
+        raise ValueError('Explicit deletion confirmation required')
+    sessions = payload.get('sessions')
+    if not isinstance(sessions, list) or not 1 <= len(sessions) <= 500 or any(
+            not isinstance(s, str) or not IDENTIFIER.fullmatch(s) for s in sessions):
+        raise ValueError('Expected 1 to 500 valid sessions')
+    sessions = list(dict.fromkeys(sessions))
+    marks = ','.join('?' for _ in sessions)
+    now = dt.datetime.now(dt.timezone.utc).isoformat(timespec='milliseconds')
+    with connect() as con:
+        con.execute('BEGIN IMMEDIATE')
+        count = con.execute('SELECT count(DISTINCT session) FROM frames WHERE session IN (' + marks + ')', sessions).fetchone()[0]
+        con.executemany('INSERT OR IGNORE INTO deleted_sessions VALUES (?,?)', [(s, now) for s in sessions])
+        removed = con.execute('DELETE FROM frames WHERE session IN (' + marks + ')', sessions).rowcount
+        con.execute('DELETE FROM annotations WHERE session IN (' + marks + ')', sessions)
+    return {'ok': True, 'deleted_records': count, 'deleted_frames': removed}
+
+
 def recordings(params):
     """Filter whole sessions by their first server receive time, never split frames."""
     clauses, args = [], []
@@ -292,14 +323,39 @@ def recordings(params):
         sum(CASE WHEN hand='left' THEN 1 ELSE 0 END) AS left_frames,
         sum(CASE WHEN hand='right' THEN 1 ELSE 0 END) AS right_frames
         FROM frames GROUP BY session) '''
-    source = ' FROM r LEFT JOIN annotations a ON a.session=r.session' + where
+    source = ' FROM r JOIN samples s ON s.session=r.session LEFT JOIN annotations a ON a.session=r.session' + where
     with connect() as con:
         con.execute('BEGIN')
         total = con.execute(base + 'SELECT count(*)' + source, args).fetchone()[0]
-        rows = con.execute(base + 'SELECT r.*,a.worker,a.label,a.v,a.active_hand' + source
+        rows = con.execute(base + 'SELECT r.*,s.sample_id,a.worker,a.label,a.v,a.active_hand' + source
                            + ' ORDER BY r.started_ms ' + order + ',r.session ' + order
                            + ' LIMIT ? OFFSET ?', args + [limit, offset]).fetchall()
     return {'records': [dict(r) for r in rows], 'total': total, 'limit': limit, 'offset': offset}
+
+
+def calibrated_counts(row, calibration):
+    """Return corrected equivalent counts, without mutating stored raw registers.
+
+    Values may exceed int16 after correction: preserve them rather than clipping.
+    Round nearest integer, with halfway cases away from zero.
+    """
+    output = [row[k] for k in VALUES]
+    if row['hand'] != 'left':
+        return output
+    for channel, fit in calibration['channels'].items():
+        ch = int(channel)
+        if not 0 <= ch < 10:
+            raise ValueError('Unsupported calibration channel')
+        for axis in range(6):
+            index = ch * 6 + axis
+            if output[index] is None:
+                continue
+            if axis < 3:
+                value = (output[index] - fit['accel_bias_raw'][axis]) / fit['accel_sensitivity_counts_per_g'][axis] * 16384
+            else:
+                value = output[index] - fit['gyro_bias_raw'][axis-3]
+            output[index] = math.floor(value + 0.5) if value >= 0 else math.ceil(value - 0.5)
+    return output
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -332,9 +388,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.export(where, args, params)
             except (ValueError, TypeError, UnicodeError) as exc:
                 return self.respond(400, {'error': str(exc)})
-        if path not in ('/api/ingest', '/api/heartbeat', '/api/annotations'):
+        if path not in ('/api/ingest', '/api/heartbeat', '/api/annotations', '/api/records/delete'):
             return self.respond(404, {'error': 'Not found'})
-        expected = ANNOTATION_TOKEN if path == '/api/annotations' else TOKEN
+        expected = ANNOTATION_TOKEN if path in ('/api/annotations', '/api/records/delete') else TOKEN
         if not expected or not hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + expected):
             return self.respond(401, {'error': 'Unauthorized'})
         try:
@@ -343,7 +399,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(413, {'error': 'Body too large or empty'})
             self.connection.settimeout(15)
             payload = json.loads(self.rfile.read(size))
-            operation = annotate if path == '/api/annotations' else heartbeat if path == '/api/heartbeat' else ingest
+            operation = {'/api/annotations': annotate, '/api/records/delete': delete_recordings,
+                         '/api/heartbeat': heartbeat, '/api/ingest': ingest}[path]
             self.respond(200, operation(payload))
         except (ValueError, TypeError, UnicodeError) as exc:
             self.respond(400, {'error': str(exc)})
@@ -374,7 +431,7 @@ class Handler(BaseHTTPRequestHandler):
                                          '(SELECT max(id) FROM frames GROUP BY device)').fetchall()
                     presence = con.execute('SELECT * FROM presence').fetchall()
                     annotations = {r['session']: dict(r) for r in con.execute('SELECT * FROM annotations')}
-                    sessions = con.execute('SELECT device,session,hand,min(received_at) started_at,'
+                    sessions = con.execute('SELECT device,session,(SELECT sample_id FROM samples s WHERE s.session=frames.session) sample_id,hand,min(received_at) started_at,'
                                            'max(received_at) ended_at,count(*) frames FROM frames '
                                            'GROUP BY device,session ORDER BY max(id) DESC LIMIT 100').fetchall()
                 devices = {r['device']: dict(r) for r in latest}
@@ -401,6 +458,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def export(self, where, args, params):
         dataset = params.get('format', ['dataset'])[0] == 'dataset'
+        counts_mode = params.get('counts', ['raw'])[0]
+        if counts_mode not in ('raw', 'calibrated'):
+            raise ValueError('Invalid counts mode')
+        if counts_mode == 'calibrated' and not dataset:
+            raise ValueError('Calibrated counts require dataset format')
+        calibration = None
+        if counts_mode == 'calibrated':
+            calibration = json.loads(Path(__file__).with_name('calibration_coefficients.json').read_text(encoding='utf-8'))
+        renumber = params.get('renumber', [''])[0] == '1'
+        sample_start = integer(int(params.get('sample_start', ['1'])[0]), 1, 10**12)
+        if renumber and not dataset:
+            raise ValueError('Renumbering requires dataset format')
         channel = params.get('channel', ['all'])[0]
         if channel == 'all':
             columns = META + VALUES + ['calibration_version'] + CAL_VALUES + SYNC_VALUES
@@ -409,7 +478,8 @@ class Handler(BaseHTTPRequestHandler):
             columns = META + [name for name in VALUES if name.startswith(f'ch{ch}_')] + ['calibration_version'] + [name for name in CAL_VALUES if name.startswith(f'cal_ch{ch}_')] + SYNC_VALUES
         self.send_response(200)
         self.send_header('Content-Type', 'text/csv; charset=utf-8')
-        self.send_header('Content-Disposition', 'attachment; filename="imu_' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d_%H%M%S') + '.csv"')
+        suffix = '_calibrated_' + calibration['version'] if calibration else ''
+        self.send_header('Content-Disposition', 'attachment; filename="imu_' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d_%H%M%S') + suffix + '.csv"')
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         self.wfile.write(b'\xef\xbb\xbf')
@@ -426,14 +496,23 @@ class Handler(BaseHTTPRequestHandler):
             # One SQLite snapshot keeps labels consistent throughout the export.
             con.execute('BEGIN')
             annotations = {r['session']: dict(r) for r in con.execute('SELECT * FROM annotations')}
+            sample_ids = {r['session']: r['sample_id'] for r in con.execute('SELECT * FROM samples')}
+            if renumber:
+                chronological = con.execute('SELECT session FROM frames' + where
+                                            + ' GROUP BY session ORDER BY min(received_unix_ms),session', args).fetchall()
+                sample_ids = {r['session']: sample_start + i for i, r in enumerate(chronological)}
             selected = '*' if dataset else ','.join(columns)
-            order = "session,sequence,CASE hand WHEN 'left' THEN 0 ELSE 1 END,id" if dataset else 'id'
+            order = "(SELECT sample_id FROM samples s WHERE s.session=frames.session),sequence,CASE hand WHEN 'left' THEN 0 ELSE 1 END,id" if dataset else 'id'
+            if renumber:
+                # Rank once per session; avoid a correlated time aggregation per frame.
+                order = "CASE session " + ' '.join('WHEN ? THEN ' + str(rank) for rank, session in enumerate(sample_ids)) + " ELSE -1 END,sequence,CASE hand WHEN 'left' THEN 0 ELSE 1 END,id" if sample_ids else 'id'
+                args = list(args) + list(sample_ids)
             for row in con.execute('SELECT ' + selected + ' FROM frames' + where + ' ORDER BY ' + order, args):
                 annotation = annotations.get(row['session'], {})
                 if dataset:
                     write([annotation.get(k, '') for k in ('worker', 'v', 'label', 'active_hand')]
-                          + ['gt_' + row['session'], row['timestamp_ms'], row['sequence'], row['hand']]
-                          + [row[k] for k in VALUES])
+                          + [sample_ids[row['session']], row['timestamp_ms'], row['sequence'], row['hand']]
+                          + (calibrated_counts(row, calibration) if calibration else [row[k] for k in VALUES]))
                 else:
                     write(tuple(row) + tuple(annotation.get(k, '') for k in ('worker', 'label', 'v', 'active_hand')))
 

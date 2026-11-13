@@ -17,6 +17,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_mac.h"
 #include "esp_netif_sntp.h"
 #include "esp_system.h"
@@ -46,7 +47,7 @@
  * 右手固件不启动本模块，只经 ESP-NOW 发送。
  */
 #define PENDING_CAPACITY   40
-#define UPLOAD_QUEUE_SIZE  64
+#define UPLOAD_QUEUE_SIZE  6000 /* 120 seconds at 50 Hz, in external RAM. */
 #define BATCH_PAIRS        40
 #define BODY_SIZE          70000
 #define PARTIAL_BATCH_MS   500
@@ -95,6 +96,8 @@ static bool s_initialized;
 static pending_buffer_t s_pending_left;
 static pending_buffer_t s_pending_right;
 static QueueHandle_t s_upload_queue;
+static StaticQueue_t s_upload_queue_control;
+static uint8_t *s_upload_queue_storage;
 static portMUX_TYPE s_pending_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static uint32_t s_left_dropped;
@@ -589,7 +592,7 @@ static bool upload_pairs(esp_http_client_handle_t client, char *body,
         int64_t post_ms = (esp_timer_get_time() - post_start) / 1000;
         if (posted) {
             s_pairs_uploaded += count;
-            ESP_LOGD(TAG, "批次 %u 对，%u B，耗时 %lld ms，free_heap=%u B",
+            ESP_LOGI(TAG, "批次 %u 对，%u B，耗时 %lld ms，free_heap=%u B",
                      count, (unsigned)length, (long long)post_ms,
                      (unsigned)esp_get_free_heap_size());
             return true;
@@ -709,7 +712,9 @@ static void upload_task(void *arg)
             ESP_LOGI(TAG, "SNTP 已启动：%s", esp_err_to_name(sntp_ret));
             clock_started = true;
         }
-        if (wait_now_ms - last_presence_ms >= 5000) {
+        /* Ingest refreshes last-seen; drain data before blocking on heartbeat. */
+        if (count == 0 && uxQueueMessagesWaiting(s_upload_queue) == 0 &&
+            wait_now_ms - last_presence_ms >= 5000) {
             last_presence_ms = wait_now_ms;
             if (cloud_presence_send(client) != ESP_OK)
                 ESP_LOGW(TAG, "Heartbeat failed; retrying");
@@ -838,8 +843,16 @@ esp_err_t cloud_upload_init(void)
 
     ESP_LOGI(TAG, "初始化前 free_heap=%u B",
              (unsigned)esp_get_free_heap_size());
-    s_upload_queue = xQueueCreate(UPLOAD_QUEUE_SIZE, sizeof(pair_t));
-    if (s_upload_queue == NULL) return ESP_ERR_NO_MEM;
+    s_upload_queue_storage = heap_caps_malloc(UPLOAD_QUEUE_SIZE * sizeof(pair_t),
+                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (s_upload_queue_storage == NULL) return ESP_ERR_NO_MEM;
+    s_upload_queue = xQueueCreateStatic(UPLOAD_QUEUE_SIZE, sizeof(pair_t),
+                                       s_upload_queue_storage, &s_upload_queue_control);
+    if (s_upload_queue == NULL) {
+        heap_caps_free(s_upload_queue_storage);
+        s_upload_queue_storage = NULL;
+        return ESP_ERR_NO_MEM;
+    }
     ESP_LOGI(TAG, "队列=%d 对（%u B/对），free_heap=%u B",
              UPLOAD_QUEUE_SIZE, (unsigned)sizeof(pair_t),
              (unsigned)esp_get_free_heap_size());
@@ -850,6 +863,8 @@ esp_err_t cloud_upload_init(void)
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         vQueueDelete(s_upload_queue);
         s_upload_queue = NULL;
+        heap_caps_free(s_upload_queue_storage);
+        s_upload_queue_storage = NULL;
         return ret;
     }
 
@@ -857,6 +872,8 @@ esp_err_t cloud_upload_init(void)
     if (xTaskCreate(upload_task, "cloud_upload", 12288, NULL, 1, NULL) != pdPASS) {
         vQueueDelete(s_upload_queue);
         s_upload_queue = NULL;
+        heap_caps_free(s_upload_queue_storage);
+        s_upload_queue_storage = NULL;
         return ESP_ERR_NO_MEM;
     }
     if (xTaskCreate(pair_task, "glove_pair", 4096, NULL, 2, NULL) != pdPASS) {

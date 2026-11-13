@@ -171,7 +171,7 @@ class RecorderTest(unittest.TestCase):
         self.assertEqual([row[name] for name in self.app.DATASET_VALUES], [str(i) for i in range(69)])
         self.assertEqual(row['timestamp/ms'],'12345')
         self.assertEqual(row['frame_id'],'9')
-        self.assertEqual(row['sample_id'],'gt_mapping-test')
+        self.assertGreater(int(row['sample_id']),0)
         self.assertEqual(row['worker'],'')
 
     def test_batch_annotation_selection_and_atomic_failure(self):
@@ -192,7 +192,9 @@ class RecorderTest(unittest.TestCase):
         rows = list(reader)
         self.assertEqual(reader.fieldnames, self.app.DATASET_COLUMNS)
         self.assertEqual(len(rows), 4)
-        self.assertEqual({r['sample_id'] for r in rows}, {'gt_batch-a', 'gt_batch-b'})
+        with self.app.connect() as con:
+            expected = {str(r[0]) for r in con.execute("SELECT sample_id FROM samples WHERE session IN ('batch-a','batch-b')")}
+        self.assertEqual({r['sample_id'] for r in rows}, expected)
         self.assertTrue(all([r[k] for k in ('worker','v','label','active_hand')]==['tester','slow','hello','both'] for r in rows))
         self.assertEqual([r['hand_type'] for r in rows], ['left','right','left','right'])
         self.assertTrue(all(r['f_0_s1_acc_x']=='0' and r['timestamp/ms']=='321' and r['dorsal_mag_x']=='' for r in rows))
@@ -247,6 +249,94 @@ class RecorderTest(unittest.TestCase):
         payload['sync_quality'] = [quality.copy()]
         payload['sync_quality'][0][7] = 0
         with self.assertRaises(HTTPError): self.post(payload)
+
+    def test_delete_records_auth_both_hands_and_retry(self):
+        frame = [1000, 0, 2047, 0, None] + [12]*69
+        def upload(session, hand='left'):
+            return self.post({'device':'delete-'+hand, 'session':session, 'hand':hand, 'frames':[frame]})
+        for session in ('delete-a','delete-b','delete-keep'):
+            for hand in ('left','right'): json.load(upload(session,hand))
+            self.app.annotate({'session':session,'worker':'tester','label':'hello','v':'slow','active_hand':'both'})
+        def remove(payload, token='label-test'):
+            return urlopen(Request(self.url+'/api/records/delete', data=json.dumps(payload).encode(), headers={'Authorization':'Bearer '+token}))
+        payload = {'sessions':['delete-a','delete-b','delete-a'],'confirm':True}
+        with self.assertRaises(HTTPError) as error: remove(payload,'test-token')
+        self.assertEqual(error.exception.code,401)
+        for invalid in ({'sessions':['delete-a']},{'sessions':[],'confirm':True},{'sessions':["bad'"],'confirm':True}):
+            with self.assertRaises(HTTPError): remove(invalid)
+        self.assertEqual(json.load(remove(payload)),{'ok':True,'deleted_records':2,'deleted_frames':4})
+        for session in ('delete-a','delete-b'):
+            self.assertEqual(json.load(urlopen(self.url+'/api/frames?session='+session))['frames'],[])
+            retry=json.load(upload(session))
+            self.assertEqual(retry['inserted'],0)
+            self.assertTrue(retry['discarded_deleted'])
+        with self.app.connect() as con:
+            self.assertEqual(con.execute("SELECT count(*) FROM annotations WHERE session IN ('delete-a','delete-b')").fetchone()[0],0)
+            self.assertEqual(con.execute("SELECT count(*) FROM frames WHERE session='delete-keep'").fetchone()[0],2)
+        self.assertEqual(json.load(remove(payload))['deleted_frames'],0)
+
+    def test_sample_numbers_persist_and_are_not_reused(self):
+        frame = [1000, 0, 2047, 0, None] + [1]*69
+        def upload(session, hand='left'):
+            return json.load(self.post({'device':'number-'+hand, 'session':session, 'hand':hand, 'frames':[frame]}))
+        def number(session):
+            with self.app.connect() as con:
+                return con.execute('SELECT sample_id FROM samples WHERE session=?',(session,)).fetchone()[0]
+        upload('number-a'); first=number('number-a')
+        upload('number-a','right');upload('number-a')
+        self.assertEqual(number('number-a'),first)
+        upload('number-b');second=number('number-b')
+        self.assertEqual(second,first+1)
+        self.app.delete_recordings({'sessions':['number-b'],'confirm':True})
+        self.app.initialize()
+        self.assertEqual(number('number-a'),first)
+        upload('number-c');self.assertEqual(number('number-c'),second+1)
+        export = urlopen(self.url+'/api/export.csv?session=number-a').read().decode('utf-8-sig')
+        self.assertEqual({r['sample_id'] for r in csv.DictReader(io.StringIO(export))},{str(first)})
+
+    def test_export_renumber_by_time_without_changing_saved_ids(self):
+        frame = [123, 7, 2047, 0, None] + [77]*69
+        for session in ('renumber-a','renumber-b','renumber-c'):
+            for hand in ('left','right'):
+                json.load(self.post({'device':'renumber-'+hand,'session':session,'hand':hand,'frames':[frame]}))
+        with self.app.connect() as con:
+            for session, stamp in [('renumber-a',300),('renumber-b',100),('renumber-c',200)]:
+                con.execute('UPDATE frames SET received_unix_ms=? WHERE session=?',(stamp,session))
+            saved=dict(con.execute('SELECT session,sample_id FROM samples'))
+        params=urlencode({'session':['renumber-a','renumber-c','renumber-b'],'renumber':'1','sample_start':'10'},doseq=True)
+        text=urlopen(Request(self.url+'/api/export.csv',data=params.encode())).read().decode('utf-8-sig')
+        reader=csv.DictReader(io.StringIO(text));rows=list(reader)
+        self.assertEqual(len(reader.fieldnames),77)
+        self.assertEqual([r['sample_id'] for r in rows],['10','10','11','11','12','12'])
+        self.assertEqual([r['hand_type'] for r in rows],['left','right']*3)
+        self.assertTrue(all(r['timestamp/ms']=='123' and r['frame_id']=='7' and r['f_0_s1_acc_x']=='77' for r in rows))
+        with self.app.connect() as con:
+            self.assertEqual(dict(con.execute('SELECT session,sample_id FROM samples')),saved)
+        with self.assertRaises(HTTPError):
+            urlopen(self.url+'/api/export.csv?renumber=1&sample_start=-1')
+
+    def test_calibrated_counts_export_keeps_raw_and_unfitted_channels(self):
+        frame=[1000,1,2047,1024,None]+list(range(69))
+        for hand in ('left','right'):
+            json.load(self.post({'device':'cal-export-'+hand,'session':'cal-export','hand':hand,'frames':[frame]}))
+        response=urlopen(self.url+'/api/export.csv?session=cal-export&counts=calibrated')
+        self.assertIn('_calibrated_left-web-',response.headers['Content-Disposition'])
+        reader=csv.DictReader(io.StringIO(response.read().decode('utf-8-sig')));rows=list(reader)
+        self.assertEqual(reader.fieldnames,self.app.DATASET_COLUMNS)
+        fit=json.loads(Path(__file__).with_name('calibration_coefficients.json').read_text())['channels']['0']
+        expected=round((0-fit['accel_bias_raw'][0])/fit['accel_sensitivity_counts_per_g'][0]*16384)
+        self.assertEqual(int(rows[0]['f_0_s1_acc_x']),expected)
+        self.assertEqual(int(rows[0]['f_0_s1_gyro_x']),round(3-fit['gyro_bias_raw'][0]))
+        self.assertNotEqual(rows[0]['f_3_s2_acc_x'],'42')
+        self.assertEqual(rows[0]['f_4_s1_acc_x'],'48')
+        self.assertEqual(rows[0]['dorsal_mag_z'],'68')
+        self.assertEqual([rows[1][k] for k in self.app.DATASET_VALUES],[str(i) for i in range(69)])
+        raw=list(csv.DictReader(io.StringIO(urlopen(self.url+'/api/export.csv?session=cal-export').read().decode('utf-8-sig'))))
+        self.assertEqual(raw[0]['f_0_s1_acc_x'],'0')
+        frame[2]=2046;frame[1]=2
+        json.load(self.post({'device':'cal-export-left','session':'cal-missing','hand':'left','frames':[frame]}))
+        missing=list(csv.DictReader(io.StringIO(urlopen(self.url+'/api/export.csv?session=cal-missing&counts=calibrated').read().decode('utf-8-sig'))))
+        self.assertEqual(missing[0]['f_0_s1_acc_x'],'')
 
 
 if __name__ == '__main__':

@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
+#include "board_config.h"
 #include "glove_identity.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
@@ -191,6 +192,7 @@ bool wifi_transport_is_connected(void)
 
 esp_err_t wifi_transport_send_frame(const imu_frame_t *frame)
 {
+    if (!GLOVE_LEGACY_UDP_ENABLED) return ESP_OK;
     if (frame == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -256,6 +258,7 @@ esp_err_t wifi_transport_send_battery(int64_t timestamp_ms,
                                       uint32_t voltage_mv,
                                       uint8_t percentage)
 {
+    if (!GLOVE_LEGACY_UDP_ENABLED) return ESP_OK;
     if (!s_connected || s_udp_socket < 0) {
         return ESP_ERR_INVALID_STATE;
     }

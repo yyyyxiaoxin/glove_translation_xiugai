@@ -1,4 +1,4 @@
-// Display-only correction of left raw counts; CSV and firmware are unchanged.
+// Shared six-face coefficients: live physical display and optional corrected-count export.
 const panel=document.createElement('section');panel.className='view panel';panel.id='calibration';panel.hidden=true;
 panel.innerHTML='<h2>左手 CH0–CH7 标定效果（初步六面标定）</h2><p>加速度 m/s²，角速度 °/s，与下方单位一致。网页使用已保存系数计算，未强制归零、未滤波；手工标定仍需独立验证。右手尚未标定。</p><div class="tablewrap"><table><thead><tr><th>通道</th><th>状态</th><th>AX (m/s²)</th><th>AY (m/s²)</th><th>AZ (m/s²)</th><th>|A| (m/s²)</th><th>GX (°/s)</th><th>GY (°/s)</th><th>GZ (°/s)</th></tr></thead><tbody id="physicalReadings"></tbody></table></div><p id="calVersion" class="footnote"></p>';
 document.querySelector('.metrics').after(panel);switchView();
@@ -19,7 +19,7 @@ function renderCalibration(){
   for(let i=3;i<6;i++)cell(tr,v?v[i].toFixed(3):'—');
   body.append(tr);
  }
- document.getElementById('calVersion').textContent=webCalibration?`版本 ${webCalibration.version} · CH8、CH9 尚未完成，CH10 未标定。显示不改变固件系数、原始数据及 CSV。`:'正在加载标定系数…';
+ document.getElementById('calVersion').textContent=webCalibration?`版本 ${webCalibration.version} · CH8、CH9 尚未完成，CH10 未标定。显示不改变原始数据；CSV 可选择标定后等效整数。`:'正在加载标定系数…';
 }
 get('calibration_coefficients.json').then(data=>{webCalibration=data;renderCalibration();}).catch(()=>{document.getElementById('calVersion').textContent='标定系数加载失败，请刷新。';});
 setInterval(renderCalibration,1000);

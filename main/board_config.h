@@ -38,6 +38,9 @@
 #define IMU_SERIAL_DATA_ENABLED   1
 #define IMU_SERIAL_DATA_BAUDRATE  921600
 
+/* Optional legacy LAN stream; cloud recording uses ESP-NOW and HTTPS. */
+#define GLOVE_LEGACY_UDP_ENABLED  0
+
 /*
  * 手套业务按键：GPIO内部上拉，按键另一端接GND，低电平有效。
  * GPIO4仅在左手固件中启用；GPIO5、GPIO6在左右手固件中都启用。

@@ -10,6 +10,8 @@ const fmtTime=x=>x?new Date(x).toLocaleString('zh-CN',{hour12:false}):'—';
 /* 录制 session 高 32 位是 UTC 秒；旧随机 session 直接显示原值。 */
 function sessionLabel(id){
  if(!id)return '—';
+ const sample=status?.sessions?.find(r=>r.session===id)?.sample_id;
+ if(sample!=null)return `样本 ${sample}`;
  const seconds=parseInt(id.slice(0,8),16);
  if(Number.isFinite(seconds)&&seconds>1704067200&&seconds<4102444800){
   return new Date(seconds*1000).toLocaleString('zh-CN',{hour12:false})+' · '+id.slice(-6);
@@ -160,6 +162,7 @@ $('export').onclick=()=>{
  for(const id of ['start','end'])if($(id).value)p.set(id,new Date($(id).value).getTime());
  if(p.has('start')&&p.has('end')&&+p.get('start')>+p.get('end')){alert('开始时间不能晚于结束时间');return;}
  p.set('format','dataset');
+ p.set('counts',$('exportCounts').value);
  window.location.href='api/export.csv?'+p;
 };
 
