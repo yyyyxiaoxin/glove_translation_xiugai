@@ -61,7 +61,7 @@ bool glove_recording_start(void)
         return false;
     }
 
-    ESP_LOGI(TAG, "开始录制：session=%016" PRIx64 "（左右手共用），再次按GPIO4结束",
+    ESP_LOGI(TAG, "开始录制：session=%016" PRIx64 "（左右手共用），再次按终端F2结束",
              id);
     return true;
 }

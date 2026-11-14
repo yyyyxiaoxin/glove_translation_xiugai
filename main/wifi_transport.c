@@ -17,6 +17,8 @@
 #include "lwip/sockets.h"
 #include "nvs_flash.h"
 #include "wifi_credentials.h"
+#include "wifi_portal.h"
+#include "nvs.h"
 
 #define UDP_FRAME_BUFFER_SIZE  1024
 
@@ -25,6 +27,7 @@ static const char *TAG = "wifi_transport";
 static int s_udp_socket = -1;
 static struct sockaddr_in s_destination;
 static volatile bool s_connected;
+static volatile bool s_scanning;
 static bool s_hello_sent;
 static uint32_t s_sent_frames;
 
@@ -95,7 +98,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     (void)arg;
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        ESP_LOGI(TAG, "正在连接热点 %s", GLOVE_WIFI_SSID);
+        ESP_LOGI(TAG, "Connecting to saved Wi-Fi");
         esp_wifi_connect();
         return;
     }
@@ -104,6 +107,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         const wifi_event_sta_disconnected_t *event = event_data;
         s_connected = false;
         s_hello_sent = false;
+        if(s_scanning) return;
         ESP_LOGW(TAG, "Wi-Fi已断开(reason=%u)，正在自动重连", event->reason);
         esp_wifi_connect();
         return;
@@ -146,6 +150,7 @@ esp_err_t wifi_transport_init(void)
         ESP_LOGE(TAG, "创建Wi-Fi STA接口失败");
         return ESP_FAIL;
     }
+    if (esp_netif_create_default_wifi_ap() == NULL) return ESP_ERR_NO_MEM;
 
     wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&init_config), TAG, "初始化Wi-Fi失败");
@@ -163,18 +168,39 @@ esp_err_t wifi_transport_init(void)
              sizeof(wifi_config.sta.ssid), "%s", GLOVE_WIFI_SSID);
     snprintf((char *)wifi_config.sta.password,
              sizeof(wifi_config.sta.password), "%s", GLOVE_WIFI_PASSWORD);
+    nvs_handle_t saved;
+    if (nvs_open("wifi_portal", NVS_READONLY, &saved) == ESP_OK) {
+        char ssid[33], password[65];size_t sn=sizeof(ssid),pn=sizeof(password);
+        if(nvs_get_str(saved,"ssid",ssid,&sn)==ESP_OK &&
+           nvs_get_str(saved,"password",password,&pn)==ESP_OK && strlen(password)<=63){
+            memset(wifi_config.sta.ssid,0,sizeof(wifi_config.sta.ssid));
+            memcpy(wifi_config.sta.ssid,ssid,strlen(ssid));
+            memset(wifi_config.sta.password,0,sizeof(wifi_config.sta.password));
+            memcpy(wifi_config.sta.password,password,strlen(password));
+        }
+        nvs_close(saved);
+    }
     wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
     wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
-    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.threshold.authmode = wifi_config.sta.password[0] ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
     wifi_config.sta.pmf_cfg.capable = true;
     wifi_config.sta.pmf_cfg.required = false;
 
     ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_RAM),
                         TAG, "设置Wi-Fi存储模式失败");
-    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA),
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA),
                         TAG, "设置Wi-Fi STA模式失败");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &wifi_config),
                         TAG, "写入热点配置失败");
+    uint8_t mac[6];esp_wifi_get_mac(WIFI_IF_STA,mac);
+    wifi_config_t ap={0};
+    snprintf((char *)ap.ap.ssid,sizeof(ap.ap.ssid),"Glove-%s-%02X%02X",GLOVE_HAND_NAME,mac[4],mac[5]);
+    ap.ap.ssid_len=strlen((char *)ap.ap.ssid);
+    /* WPA2 protects credentials submitted over the local HTTP portal. */
+    snprintf((char *)ap.ap.password,sizeof(ap.ap.password),"88888888");
+    ap.ap.authmode=WIFI_AUTH_WPA2_PSK;ap.ap.max_connection=2;ap.ap.channel=1;
+    ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_AP,&ap),TAG,"AP config failed");
+    ESP_LOGI(TAG,"Setup AP: %s; address: http://192.168.4.1",ap.ap.ssid);
     ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE),
                         TAG, "关闭Wi-Fi省电失败");
     ESP_RETURN_ON_ERROR(create_udp_socket(), TAG, "初始化UDP发送失败");
@@ -182,12 +208,26 @@ esp_err_t wifi_transport_init(void)
 
     ESP_LOGI(TAG, "局域网传输已启动：SSID=%s，端口=%d（密码不打印）",
              GLOVE_WIFI_SSID, GLOVE_ROCK_DATA_PORT);
-    return ESP_OK;
+    return wifi_portal_start();
 }
 
 bool wifi_transport_is_connected(void)
 {
     return s_connected;
+}
+
+esp_err_t wifi_transport_scan(uint16_t *count, wifi_ap_record_t *records)
+{
+    s_scanning=true;
+    bool reconnect=!s_connected;
+    if(reconnect) esp_wifi_disconnect();
+    wifi_scan_config_t config={.show_hidden=false};
+    esp_err_t result=esp_wifi_scan_start(&config,true);
+    if(result==ESP_OK) result=esp_wifi_scan_get_ap_records(count,records);
+    else esp_wifi_clear_ap_list();
+    s_scanning=false;
+    if(reconnect) esp_wifi_connect();
+    return result;
 }
 
 esp_err_t wifi_transport_send_frame(const imu_frame_t *frame)

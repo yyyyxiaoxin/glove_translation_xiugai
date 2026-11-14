@@ -43,7 +43,7 @@
 
 /*
  * 手套业务按键：GPIO内部上拉，按键另一端接GND，低电平有效。
- * GPIO4仅在左手固件中启用；GPIO5、GPIO6在左右手固件中都启用。
+ * GPIO4录制控制已禁用，改用串口终端F2；GPIO5、GPIO6在左右手固件中都启用。
  * GPIO0保留给BOOT下载键，EN保留给复位键，不与业务按键复用。
  */
 #define BUTTON_INFERENCE_GPIO       GPIO_NUM_4

@@ -60,13 +60,6 @@ static calibration_tracker_t s_tracker[IMU_TOTAL_CHANNELS];
 static glove_accel_window_t s_accel_windows[IMU_TOTAL_CHANNELS];
 
 #if CONFIG_GLOVE_HAND_LEFT
-static void handle_recording_start_press(void)
-{
-    bool active = glove_recording_active();
-    bool changed = active ? glove_recording_stop() : glove_recording_start();
-    if (changed) max98357a_announce_recording(!active);
-}
-
 static void handle_recording_stop_press(void)
 {
     ESP_LOGI(TAG, "GPIO%d停止采集键", BUTTON_OPERATION_MODE_GPIO);
@@ -151,10 +144,6 @@ static void button_task(void *argument)
     button_state_t buttons[] = {
 #if CONFIG_GLOVE_HAND_LEFT
         {
-            .pin = BUTTON_INFERENCE_GPIO,
-            .on_press = handle_recording_start_press,
-        },
-        {
             .pin = BUTTON_OPERATION_MODE_GPIO,
             .on_press = handle_recording_stop_press,
         },
@@ -186,9 +175,6 @@ esp_err_t glove_buttons_init(void)
 
     uint64_t pin_mask = (1ULL << BUTTON_OPERATION_MODE_GPIO) |
                         (1ULL << BUTTON_CALIBRATION_GPIO);
-#if CONFIG_GLOVE_HAND_LEFT
-    pin_mask |= 1ULL << BUTTON_INFERENCE_GPIO;
-#endif
 
     const gpio_config_t input_config = {
         .pin_bit_mask = pin_mask,
@@ -211,7 +197,7 @@ esp_err_t glove_buttons_init(void)
 
     s_initialized = true;
 #if CONFIG_GLOVE_HAND_LEFT
-    ESP_LOGI(TAG, "左手按键初始化：GPIO%d=开始/结束采集，GPIO%d=备用停止，GPIO%d=姿态校准",
+    ESP_LOGI(TAG, "左手按键初始化：GPIO%d=禁用（串口F2控制录制），GPIO%d=备用停止，GPIO%d=姿态校准",
              BUTTON_INFERENCE_GPIO, BUTTON_OPERATION_MODE_GPIO,
              BUTTON_CALIBRATION_GPIO);
 #else

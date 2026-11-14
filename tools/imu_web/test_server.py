@@ -42,6 +42,33 @@ class RecorderTest(unittest.TestCase):
         return urlopen(Request(self.url + '/api/ingest', data=json.dumps(payload).encode(),
                               headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}))
 
+    def test_export_5000_recordings_and_limit(self):
+        def cleanup():
+            with self.app.connect() as con:
+                con.execute("DELETE FROM frames WHERE device='bulk-device'")
+                con.execute("DELETE FROM samples WHERE session LIKE 'large-export-%'")
+        self.addCleanup(cleanup)
+        sessions=[f'large-export-{i:04d}' for i in range(5000)]
+        frame=[100,1,2047,0,None]+list(range(69))
+        with self.app.connect() as con:
+            for i,session in enumerate(sessions):
+                rows=self.app.build_rows('bulk-device',session,'left',[frame],None,None,None,
+                                         self.app.dt.datetime(2026,11,13,tzinfo=self.app.dt.timezone.utc),i)
+                columns=self.app.META[1:]+self.app.VALUES+['calibration_version']+self.app.CAL_VALUES+self.app.SYNC_VALUES
+                con.execute('INSERT INTO frames ('+','.join(columns)+') VALUES ('+','.join('?' for _ in columns)+')',rows[0])
+                con.execute('INSERT INTO samples(session) VALUES (?)',(session,))
+        body=urlencode({'session':sessions,'renumber':'1','sample_start':'1'},doseq=True).encode()
+        self.assertGreater(len(body),120000)
+        with urlopen(Request(self.url+'/api/export.csv',data=body)) as response:
+            rows=list(csv.reader(io.StringIO(response.read().decode('utf-8-sig'))))
+        self.assertEqual(len(rows),5001)
+        self.assertEqual(len(rows[0]),77)
+        self.assertEqual(rows[1][4],'1')
+        self.assertEqual(rows[-1][4],'5000')
+        with self.assertRaises(HTTPError) as error:
+            urlopen(Request(self.url+'/api/export.csv',data=urlencode({'session':sessions+['extra']},doseq=True).encode()))
+        self.assertEqual(error.exception.code,400)
+
     def test_combined_hands_and_source_timestamps(self):
         left_frame = [1000, 7, 2047, 0, None] + list(range(69))
         right_frame = [1000, 7, 2047, 0, None] + list(range(69))

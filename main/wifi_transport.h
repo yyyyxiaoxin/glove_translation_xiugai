@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "esp_wifi.h"
 #include "imu_acquisition.h"
 
 #ifdef __cplusplus
@@ -12,6 +13,7 @@ extern "C" {
 
 /* Start Wi-Fi STA mode and reconnect automatically if the hotspot drops. */
 esp_err_t wifi_transport_init(void);
+esp_err_t wifi_transport_scan(uint16_t *count, wifi_ap_record_t *records);
 
 /* Send one raw IMU CSV frame through UDP broadcast when Wi-Fi is ready. */
 esp_err_t wifi_transport_send_frame(const imu_frame_t *frame);

@@ -96,12 +96,20 @@ static bool s_initialized;
 static pending_buffer_t s_pending_left;
 static pending_buffer_t s_pending_right;
 static QueueHandle_t s_upload_queue;
+static volatile unsigned s_batch_pending;
 static StaticQueue_t s_upload_queue_control;
 static uint8_t *s_upload_queue_storage;
 static portMUX_TYPE s_pending_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static uint32_t s_left_dropped;
 static uint32_t s_right_dropped;
+
+bool cloud_upload_has_pending(void)
+{
+    return s_initialized && (s_batch_pending ||
+        uxQueueMessagesWaiting(s_upload_queue) ||
+        s_pending_left.count || s_pending_right.count);
+}
 static uint32_t s_pair_dropped;
 static uint32_t s_pairs_emitted;
 static uint32_t s_pairs_uploaded;
@@ -761,6 +769,7 @@ static void upload_task(void *arg)
                 batch_started_ms = now_ms;
             }
             batch[count++] = next;
+            s_batch_pending = count;
         }
 
         if (count == 0) {
@@ -811,6 +820,7 @@ static void upload_task(void *arg)
         if (full || stale || changed) {
             if (upload_pairs(client, body, batch, count)) {
                 count = 0;
+                s_batch_pending = 0;
                 if (s_pairs_uploaded - last_logged >= 500) {
                     last_logged = s_pairs_uploaded;
                     ESP_LOGI(TAG, "已上传 %" PRIu32 " 对（双手合计 %" PRIu32

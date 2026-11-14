@@ -144,6 +144,7 @@ $('deleteForm').onsubmit=async event=>{
 $('cancelAnnotation').onclick=()=>{$('annotationEditor').hidden=true;annotationTargets=[];};
 $('downloadSelected').onclick=()=>{
  if(!selectedRecords.size)return;
+ if(selectedRecords.size>5000){$('recordMessage').textContent='一次最多合并下载 5000 条采集记录，请减少选择。';return;}
  const renumber=$('renumberExport').checked;
  const start=Number($('sampleStart').value);
  if(renumber&&(!Number.isSafeInteger(start)||start<1||start>1e12)){

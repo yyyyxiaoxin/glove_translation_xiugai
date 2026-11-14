@@ -259,10 +259,10 @@ def filters(params):
     clauses, args = [], []
     sessions = params.get('session', [])
     if sessions:
-        if not 1 <= len(sessions) <= 500 or any(not IDENTIFIER.fullmatch(s) for s in sessions):
-            raise ValueError('Expected 1 to 500 valid sessions')
-        clauses.append('session IN (' + ','.join('?' for _ in sessions) + ')')
-        args.extend(sessions)
+        if not 1 <= len(sessions) <= 5000 or any(not IDENTIFIER.fullmatch(s) for s in sessions):
+            raise ValueError('Expected 1 to 5000 valid sessions')
+        clauses.append('session IN (SELECT value FROM json_each(?))')
+        args.append(json.dumps(sessions))
     for key in ('device', 'hand'):
         if params.get(key, [''])[0]:
             clauses.append(key + '=?')
@@ -378,7 +378,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/export.csv':
             try:
                 size = int(self.headers.get('Content-Length', '0'))
-                if not 0 < size <= 120000:
+                if not 0 < size <= 600000:
                     return self.respond(413, {'error': 'Body too large or empty'})
                 self.connection.settimeout(15)
                 params = parse_qs(self.rfile.read(size).decode('utf-8'))

@@ -18,6 +18,7 @@
 #include "imu_acquisition.h"
 #include "max98357a_audio.h"
 #include "wifi_transport.h"
+#include "serial_recording.h"
 
 static const char *TAG = "glove_imu";
 
@@ -124,7 +125,7 @@ void app_main(void)
     ESP_LOGI(TAG, "TCA2: GPIO%d(SDA), GPIO%d(SCL), CH0~CH1=2个MPU, CH2=ICM",
              TCA2_I2C_SDA_GPIO, TCA2_I2C_SCL_GPIO);
 #if CONFIG_GLOVE_HAND_LEFT
-    ESP_LOGI(TAG, "按键: GPIO%d=开始/结束采集，GPIO%d=备用停止，GPIO%d=姿态校准",
+    ESP_LOGI(TAG, "按键: GPIO%d=禁用（串口F2控制录制），GPIO%d=备用停止，GPIO%d=姿态校准",
              BUTTON_INFERENCE_GPIO, BUTTON_OPERATION_MODE_GPIO,
              BUTTON_CALIBRATION_GPIO);
 #else
@@ -157,6 +158,7 @@ void app_main(void)
     }
 #endif
 
+    ESP_ERROR_CHECK(serial_recording_init());
     ret = wifi_transport_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Wi-Fi传输初始化失败，串口采集仍会继续: %s",

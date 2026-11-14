@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>手套 Wi-Fi 配网</title>
+<style>body{font:17px system-ui;max-width:540px;margin:32px auto;padding:0 20px;background:#f3f6fa;color:#172637}main{background:white;padding:24px;border-radius:16px}input,button,select{box-sizing:border-box;width:100%;padding:12px;margin:8px 0;font:inherit}button{background:#1464d2;color:white;border:0;border-radius:8px}label{display:block;margin-top:16px}#message{white-space:pre-wrap}small{color:#536171}</style>
+<main><h1>手套 Wi-Fi 配网</h1><p id="status">正在读取状态…</p><p>左右手请连接同一台 2.4GHz 路由器或热点。录制期间请勿配网。</p>
+<button id="scan" type="button">扫描附近 Wi-Fi</button><select id="networks" aria-label="附近的 Wi-Fi"><option value="">扫描后选择网络</option></select>
+<form id="form"><label for="ssid">Wi-Fi 名称</label><input id="ssid" maxlength="32" required autocomplete="off"><label for="password">Wi-Fi 密码</label><input id="password" type="password" maxlength="64" autocomplete="new-password"><small>开放网络请留空密码。保存后自动连接，配置在断电后保留。</small><button id="save">保存并连接</button></form><p id="message" role="status"></p><small>手机若提示此热点无法上网，请选择继续连接。配网地址：http://192.168.4.1</small></main>
+<script>
+const $=id=>document.getElementById(id);let busy=false;
+async function api(path,options){const r=await fetch(path,options);const d=await r.json();if(!r.ok)throw Error(d.error||'请求失败');return d;}
+async function status(){try{const d=await api('/api/status');$('status').textContent=`${d.hand==='left'?'左手':'右手'} · ${d.connected?'已联网':'未联网'} · ${d.ssid||'尚未配置'}${d.ip?' · '+d.ip:''}${d.recording?' · 正在录制':''}`;if(!busy){$('scan').disabled=$('save').disabled=d.recording;}}catch(e){$('status').textContent='连接已中断，请重新连接手套热点后刷新。';}}
+$('networks').onchange=()=>{$('ssid').value=$('networks').value;};
+$('scan').onclick=async()=>{busy=true;$('scan').disabled=true;$('message').textContent='扫描中，请稍候…';try{const d=await api('/api/scan');$('networks').replaceChildren(new Option('请选择网络',''));for(const n of d.networks){$('networks').add(new Option(`${n.ssid} (${n.rssi} dBm${n.secure?'，加密':''})`,n.ssid));}$('message').textContent='扫描完成，也可以手动填写网络名称。';}catch(e){$('message').textContent=e.message;}finally{busy=false;$('scan').disabled=false;status();}};
+$('form').onsubmit=async e=>{e.preventDefault();busy=true;$('save').disabled=true;try{await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid:$('ssid').value,password:$('password').value})});$('password').value='';$('message').textContent='已保存，正在连接。切换信道时手机可能短暂断开，请重新连接手套热点查看状态。';}catch(e){$('message').textContent=e.message;}finally{busy=false;$('save').disabled=false;}};status();setInterval(status,5000);
+</script></html>

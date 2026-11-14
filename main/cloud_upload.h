@@ -3,6 +3,7 @@
 #include "imu_acquisition.h"
 
 esp_err_t cloud_upload_init(void);
+bool cloud_upload_has_pending(void);
 
 /* 本机采集帧。 */
 void cloud_upload_submit(const imu_frame_t *frame);
